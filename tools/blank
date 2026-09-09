@@ -1,0 +1,189 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# blank — 백지 앱의 채점기. 폰에 이미 로그인된 claude CLI 로 무료로 돌린다.
+#
+# 앱 → 터미널 : Download/blank/ 아래 요청 파일 + Termux RUN_COMMAND
+# 터미널 → 앱 : am broadcast 만 쓴다 (앱은 남이 만든 파일을 읽지 못한다)
+#
+# 요청 파일 형식
+#   op=grade|normalize
+#   req=<요청 id>
+#   model=<모델 id>
+#   image=<사진 절대경로 또는 빈 값>
+#   ---
+#   <요소표 JSON (grade) 또는 제목 (normalize)>
+#   ===
+#   <재현물 텍스트 (grade) 또는 원본 (normalize)>
+set -u
+
+export HOME="${HOME:-/data/data/com.termux/files/home}"
+export PATH="$HOME/.local/bin:$HOME/bin:/data/data/com.termux/files/usr/bin:${PATH:-}"
+
+# RUN_COMMAND 백그라운드 실행은 로그인 셸이 아니다. 그리고 이 스크립트가 Claude Code
+# 세션 안에서 실행되면 그 세션의 루프백 프록시를 물려받는데, 세션이 끝나면 그 포트가
+# 사라져 이후 claude 호출이 전부 Connection refused 로 죽는다. 루프백만 걷어낸다.
+for v in http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY; do
+  case "${!v:-}" in *127.0.0.1*|*localhost*) unset "$v" ;; esac
+done
+unset CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID \
+      CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN \
+      CLAUDE_CODE_BRIDGE_SESSION_ID CLAUDE_CODE_ENTRYPOINT \
+      CLAUDE_CODE_PROXY_RESOLVES_HOSTS CLAUDE_PID CLAUDE_EFFORT AI_AGENT
+
+PKG="com.blank.app"
+RECEIVER="$PKG/.cli.CommandReceiver"
+ACTION="$PKG.CMD"
+BR="/storage/emulated/0/Download/blank"
+ASSETS="${BLANK_ASSETS:-$HOME/blank-page/app/src/main/assets}"
+LOG="$BR/blank.log"
+# 브로드캐스트 한 조각의 최대 길이. binder 트랜잭션 한도(1MB)에 여유를 크게 둔다.
+CHUNK=48000
+
+log() { mkdir -p "$BR"; printf '%s %s\n' "$(date +%H:%M:%S)" "$*" >> "$LOG"; }
+
+send() { # send <cmd> <req> [extra am args...]
+  local cmd="$1" req="$2"; shift 2
+  am broadcast -n "$RECEIVER" -a "$ACTION" --include-stopped-packages \
+     -e cmd "$cmd" -e req "$req" "$@" >/dev/null 2>&1
+}
+
+send_json() { # send_json <req> <json>
+  local req="$1" json="$2" len i n part
+  len=${#json}
+  n=$(( (len + CHUNK - 1) / CHUNK )); [ "$n" -lt 1 ] && n=1
+  for (( i=0; i<n; i++ )); do
+    part="${json:$((i*CHUNK)):$CHUNK}"
+    send result "$req" --ei part "$i" --ei parts "$n" -e json "$part"
+    sleep 0.15
+  done
+  log "sent $req in $n part(s), $len bytes"
+}
+
+# 요청 파일 하나를 처리한다. 두 번 처리하지 않도록 .done 마커를 남긴다.
+claim() {
+  local f="$1"
+  [ -f "$f.done" ] && return 1
+  : > "$f.done"
+  return 0
+}
+
+run_one() {
+  local f="$1"
+  [ -f "$f" ] || { log "no such request: $f"; return 1; }
+  claim "$f" || { log "already done: $f"; return 0; }
+
+  local op req model image kind body top bottom
+  op=$(sed -n 's/^op=//p'    "$f" | head -1)
+  kind=$(sed -n 's/^kind=//p' "$f" | head -1)
+  req=$(sed -n 's/^req=//p'   "$f" | head -1)
+  model=$(sed -n 's/^model=//p' "$f" | head -1)
+  image=$(sed -n 's/^image=//p' "$f" | head -1)
+  : "${op:=grade}" ; : "${model:=claude-opus-5}"
+  [ -z "$req" ] && req="$(basename "$f")"
+
+  # --- 이후가 본문, === 로 위/아래가 갈린다
+  body=$(awk 'f{print} /^---$/{f=1}' "$f")
+  top=$(printf '%s' "$body" | awk '/^===$/{exit} {print}')
+  bottom=$(printf '%s' "$body" | awk 'f{print} /^===$/{f=1}')
+
+  local sys schema user
+  if [ "$op" = "normalize" ]; then
+    sys="$ASSETS/normalize_prompt.txt"; schema="$ASSETS/normalize_schema.json"
+    user="<종류>${kind:-mixed}</종류>
+<제목>$top</제목>
+<원본>
+$bottom
+</원본>"
+  else
+    sys="$ASSETS/grading_prompt.txt"; schema="$ASSETS/grading_schema.json"
+    if [ -n "$image" ]; then
+      user="<요소표>$top</요소표>
+<재현물>
+사진 경로: $image
+$bottom
+</재현물>"
+    else
+      user="<요소표>$top</요소표>
+<재현물>
+$bottom
+</재현물>"
+    fi
+  fi
+  [ -f "$sys" ] || { send failed "$req" -e reason "프롬프트 파일이 없습니다: $sys"; log "missing $sys"; return 1; }
+
+  send status "$req" -e text "채점 중"
+  log "run $op req=$req model=$model image=${image:-none}"
+
+  # 사진이 있으면 Read 도구만 열어 그 폴더를 읽힌다. 없으면 도구를 통째로 끈다.
+  local -a tools=()
+  if [ -n "$image" ]; then
+    tools=(--tools Read --add-dir "$(dirname "$image")")
+  else
+    tools=(--tools "")
+  fi
+
+  local out rc
+  out=$(claude -p "$user" \
+        --output-format json \
+        --json-schema "$(cat "$schema")" \
+        --system-prompt "$(cat "$sys")" \
+        --model "$model" \
+        "${tools[@]}" \
+        --permission-mode dontAsk < /dev/null 2>>"$LOG")
+  rc=$?
+  if [ $rc -ne 0 ] || [ -z "$out" ]; then
+    send failed "$req" -e reason "claude 실행 실패 (rc=$rc)"
+    log "claude failed rc=$rc"
+    return 1
+  fi
+
+  # structured_output 을 먼저 본다. 없으면 result 문자열에서 JSON 을 긁어낸다.
+  local json
+  json=$(printf '%s' "$out" | jq -c '.structured_output // empty' 2>/dev/null)
+  if [ -z "$json" ] || [ "$json" = "null" ]; then
+    json=$(printf '%s' "$out" | jq -r '.result // empty' 2>/dev/null \
+           | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//' \
+           | jq -c . 2>/dev/null)
+  fi
+  if [ -z "$json" ]; then
+    send failed "$req" -e reason "채점 결과를 읽지 못했습니다 (JSON 아님)"
+    log "unparseable output: $(printf '%s' "$out" | head -c 400)"
+    return 1
+  fi
+
+  # 터미널에서 눈으로 확인할 수 있게 마지막 결과를 남긴다 (디버깅용)
+  printf '%s' "$json" > "$BR/last_$req.json"
+  send_json "$req" "$json"
+}
+
+case "${1:-help}" in
+  run)   run_one "$2" ;;
+  # RUN_COMMAND 가 막혔을 때를 위한 수동 경로. 아직 안 한 요청을 전부 처리한다.
+  watch)
+    log "watch start"
+    while true; do
+      for f in "$BR"/req_*.txt; do
+        [ -e "$f" ] || continue
+        [ -f "$f.done" ] && continue
+        run_one "$f"
+      done
+      sleep 3
+    done ;;
+  drain)
+    for f in "$BR"/req_*.txt; do
+      [ -e "$f" ] || continue
+      [ -f "$f.done" ] && continue
+      run_one "$f"
+    done ;;
+  log)   tail -n "${2:-40}" "$LOG" ;;
+  clean) rm -f "$BR"/req_*.txt "$BR"/req_*.done; echo "cleaned" ;;
+  *) cat <<'USAGE'
+blank — 백지 앱 채점기
+
+  blank run <요청파일>   요청 하나를 처리한다 (앱이 RUN_COMMAND 로 부른다)
+  blank watch            RUN_COMMAND 가 막혔을 때 요청 폴더를 계속 훑는다
+  blank drain            지금 밀려 있는 요청만 처리하고 끝낸다
+  blank log [n]          최근 로그
+  blank clean            요청 파일 정리
+USAGE
+    ;;
+esac

@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "title", "kind", "order_sensitive", "elements"],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "title": { "type": "string" },
+    "kind": { "type": "string", "enum": ["diagram", "list", "procedure", "definition", "numeric", "mixed"] },
+    "order_sensitive": { "type": "boolean" },
+    "elements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "canonical", "aliases", "kind", "required", "order_index", "parent_id", "numeric"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "canonical": { "type": "string" },
+          "aliases": { "type": "array", "items": { "type": "string" } },
+          "kind": { "type": "string", "enum": ["fact", "term", "number", "relation", "step", "label"] },
+          "required": { "type": "boolean" },
+          "order_index": { "type": "integer" },
+          "parent_id": { "type": "string" },
+          "numeric": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["has_value", "value", "unit", "comparator", "tolerance_abs", "tolerance_pct"],
+            "properties": {
+              "has_value": { "type": "boolean" },
+              "value": { "type": "number" },
+              "unit": { "type": "string" },
+              "comparator": { "type": "string", "enum": ["none", "eq", "gte", "lte", "gt", "lt", "range"] },
+              "tolerance_abs": { "type": "number" },
+              "tolerance_pct": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

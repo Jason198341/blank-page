@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 재현물 사진. 앱 전용 외부 저장소라 별도 권한이 필요 없다. -->
+    <external-files-path name="shots" path="shots/" />
+</paths>

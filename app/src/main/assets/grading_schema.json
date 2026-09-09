@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "submission_type", "transcript", "judgements", "extras", "score", "grade", "summary", "review_original", "next_action"],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "submission_type": { "type": "string", "enum": ["full", "partial", "blank"] },
+    "transcript": { "type": "string" },
+    "judgements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["element_id", "verdict", "reason", "quote"],
+        "properties": {
+          "element_id": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["correct", "missing", "wrong", "order_error"] },
+          "reason": { "type": "string" },
+          "quote": { "type": "string" }
+        }
+      }
+    },
+    "extras": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "kind", "reason"],
+        "properties": {
+          "text": { "type": "string" },
+          "kind": { "type": "string", "enum": ["correct_addition", "harmless", "contradiction"] },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "score": { "type": "integer" },
+    "grade": { "type": "string", "enum": ["A", "B", "C", "D", "F"] },
+    "summary": { "type": "string" },
+    "review_original": { "type": "boolean" },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interval", "focus_element_ids", "advice"],
+      "properties": {
+        "interval": { "type": "string", "enum": ["repeat_1d", "repeat_3d", "keep_schedule", "extend", "retire"] },
+        "focus_element_ids": { "type": "array", "items": { "type": "string" } },
+        "advice": { "type": "string" }
+      }
+    }
+  }
+}

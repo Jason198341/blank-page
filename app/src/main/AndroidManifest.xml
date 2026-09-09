@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 그 날 그 시각에 뜨는 게 이 앱의 전부다. 정확 알람이 아니면 기능이 없는 것과 같다. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 채점을 폰의 claude CLI 에 맡길 때 Termux 를 직접 깨운다 -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <queries>
+        <!-- Android 11+ 에서 Termux 설치 여부를 보려면 명시해야 한다 -->
+        <package android:name="com.termux" />
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".BlankApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.BlankApp">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.BlankApp">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 터미널(am broadcast) → 앱. 채점 결과가 이 문으로 들어온다.
+             매니페스트가 이 클래스를 가리키므로 지우면 브로드캐스트마다 앱이 죽는다. -->
+        <receiver
+            android:name=".cli.CommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.blank.app.CMD" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 정확 알람 발화 지점 -->
+        <receiver
+            android:name=".notify.ReviewAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 알람은 재부팅·시간변경·업데이트에서 통째로 날아간다. 전부 재무장한다. -->
+        <receiver
+            android:name=".notify.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
