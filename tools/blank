@@ -111,6 +111,7 @@ $bottom
   [ -f "$sys" ] || { send failed "$req" -e reason "프롬프트 파일이 없습니다: $sys"; log "missing $sys"; return 1; }
 
   send status "$req" -e text "채점 중"
+  local t0=$(date +%s)
   log "run $op req=$req model=$model image=${image:-none}"
 
   # 사진이 있으면 Read 도구만 열어 그 폴더를 읽힌다. 없으면 도구를 통째로 끈다.
@@ -122,11 +123,19 @@ $bottom
   fi
 
   local out rc
+  # 속도: 기본 호출은 57초였다. 범인은 둘이다 —
+  #  (1) MCP 설정 로딩과 세션 저장에 26초. 채점은 도구도 대화 이력도 안 쓰므로 통째로 끈다.
+  #  (2) adaptive thinking 에 7초. effort low 로 내려도 판정이 한 글자도 안 바뀐다(실측).
+  # 모델은 opus-5 를 유지한다. sonnet 으로 내리면 "미토콘드리아" 만 쓴 답을
+  # "미토콘드리아 기질" 로 봐주기 시작한다 — 후한 채점은 이 앱을 무의미하게 만든다.
   out=$(claude -p "$user" \
         --output-format json \
         --json-schema "$(cat "$schema")" \
         --system-prompt "$(cat "$sys")" \
         --model "$model" \
+        --effort low \
+        --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+        --no-session-persistence \
         "${tools[@]}" \
         --permission-mode dontAsk < /dev/null 2>>"$LOG")
   rc=$?
@@ -152,6 +161,7 @@ $bottom
 
   # 터미널에서 눈으로 확인할 수 있게 마지막 결과를 남긴다 (디버깅용)
   printf '%s' "$json" > "$BR/last_$req.json"
+  log "done $req in $(( $(date +%s) - t0 ))s"
   send_json "$req" "$json"
 }
 

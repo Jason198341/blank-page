@@ -175,12 +175,23 @@ class BlankRepository(
         val result = runCatching { BlankJson.decodeFromString<GradingResult>(json) }.getOrNull()
             ?: run { markFailed(submissionId, "채점 결과를 읽지 못했습니다"); return }
 
-        val grade = result.toGrade()
+        // 채점 기준이 된 그 회차의 요소표로 점수를 다시 센다 (모델의 산수는 믿지 않는다)
+        val round = db.rounds().byId(comparison.roundId)
+        val revisionId = round?.revisionId?.takeIf { it != 0L }
+            ?: db.items().byId(round?.itemId ?: 0)?.currentRevisionId ?: 0
+        val sheet = runCatching {
+            BlankJson.decodeFromString<ElementSheet>(
+                db.revisions().byId(revisionId)?.sheetJson.orEmpty()
+            )
+        }.getOrDefault(ElementSheet())
+
+        val grade = result.gradeFor(sheet)
         db.comparisons().update(
             comparison.copy(
                 hit = result.hits(),
-                total = if (result.judgements.isNotEmpty()) result.judgements.size else comparison.total,
-                score = result.score,
+                total = if (sheet.elements.isNotEmpty()) sheet.elements.size
+                    else result.judgements.size.coerceAtLeast(comparison.total),
+                score = result.computeScore(sheet),
                 grade = grade,
                 suggestedGrade = grade,
                 judgementsJson = BlankJson.encodeToString(result.judgements),

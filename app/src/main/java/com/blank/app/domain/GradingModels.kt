@@ -128,12 +128,47 @@ data class GradingResult(
     fun hits(): Int = judgements.count { it.verdictEnum() == Verdict.CORRECT }
 
     /**
-     * 모델이 매긴 A~F 를 앱의 3등급으로 접는다. 3단계 이상은 자기채점 노이즈만 늘린다.
-     * A = 완전재현, B·C = 골격은 섰다, D·F = 무너졌다.
+     * 점수를 앱에서 다시 계산한다. 모델이 준 [score] 는 쓰지 않는다.
+     *
+     * 판정이 여섯 개 모두 똑같은데도 모델이 33점과 50점을 오갔다(실측). 스키마는 형식만
+     * 보장하지 산수까지 보장하지 않는다. 판정은 모델이, 셈은 앱이 한다.
+     *
+     * 가중치는 required 2 / 그 외 1. 요소 점수는 correct 1.0, order_error 0.5,
+     * wrong·missing 0. 원본과 어긋나는 덧붙임(contradiction)은 하나당 5점을 뺀다.
      */
-    fun toGrade(): Grade = when (grade.uppercase()) {
-        "A" -> Grade.GREEN
-        "B", "C" -> Grade.AMBER
-        else -> Grade.RED
+    fun computeScore(sheet: ElementSheet): Int {
+        val byId = judgements.associateBy { it.elementId }
+        var weightSum = 0.0
+        var earned = 0.0
+        sheet.elements.forEach { element ->
+            val weight = if (element.required) 2.0 else 1.0
+            weightSum += weight
+            earned += weight * when (byId[element.id]?.verdictEnum()) {
+                Verdict.CORRECT -> 1.0
+                Verdict.ORDER_ERROR -> 0.5
+                else -> 0.0
+            }
+        }
+        if (weightSum <= 0.0) return 0
+        val penalty = extras.count { it.kind == "contradiction" } * 5
+        return (Math.round(100 * earned / weightSum).toInt() - penalty).coerceIn(0, 100)
+    }
+
+    /**
+     * 앱이 계산한 점수를 3등급으로 접는다. 3단계 이상은 자기채점 노이즈만 늘린다.
+     * 필수 요소를 하나라도 틀리게 기억하고 있으면 완전재현으로 보지 않는다 —
+     * 빠뜨린 것보다 틀리게 아는 쪽이 위험하다.
+     */
+    fun gradeFor(sheet: ElementSheet): Grade {
+        val score = computeScore(sheet)
+        val requiredWrong = sheet.elements.any { element ->
+            element.required &&
+                judgements.firstOrNull { it.elementId == element.id }?.verdictEnum() == Verdict.WRONG
+        }
+        return when {
+            score >= 90 && !requiredWrong -> Grade.GREEN
+            score >= 60 -> Grade.AMBER
+            else -> Grade.RED
+        }
     }
 }
