@@ -104,34 +104,17 @@ data class Extra(
 )
 
 @Serializable
-data class NextAction(
-    val interval: String = "keep_schedule",
-    @SerialName("focus_element_ids") val focusElementIds: List<String> = emptyList(),
-    val advice: String = ""
-)
-
-@Serializable
-data class GradingResult(
-    @SerialName("schema_version") val schemaVersion: Int = 1,
-    @SerialName("submission_type") val submissionType: String = "partial",
-    /** 사진을 읽어 옮겨 적은 글. 글로 제출했으면 비어 있다. */
-    val transcript: String = "",
+data class GradingStage1(
     val judgements: List<Judgement> = emptyList(),
-    val extras: List<Extra> = emptyList(),
-    val score: Int = 0,
-    val grade: String = "F",
-    val summary: String = "",
-    @SerialName("review_original") val reviewOriginal: Boolean = false,
-    @SerialName("next_action") val nextAction: NextAction = NextAction()
+    val extras: List<Extra> = emptyList()
 ) {
     /** 맞힌 요소 수 (순서만 틀린 것은 반쯤 맞은 것이라 세지 않는다) */
     fun hits(): Int = judgements.count { it.verdictEnum() == Verdict.CORRECT }
 
     /**
-     * 점수를 앱에서 다시 계산한다. 모델이 준 [score] 는 쓰지 않는다.
-     *
-     * 판정이 여섯 개 모두 똑같은데도 모델이 33점과 50점을 오갔다(실측). 스키마는 형식만
-     * 보장하지 산수까지 보장하지 않는다. 판정은 모델이, 셈은 앱이 한다.
+     * 점수를 앱에서 계산한다. 모델에게 시키지 않는다 —
+     * 판정이 여섯 개 모두 똑같은데도 33점과 50점을 오갔다(실측).
+     * 스키마는 형식을 보장하지 산수를 보장하지 않는다.
      *
      * 가중치는 required 2 / 그 외 1. 요소 점수는 correct 1.0, order_error 0.5,
      * wrong·missing 0. 원본과 어긋나는 덧붙임(contradiction)은 하나당 5점을 뺀다.
@@ -155,9 +138,8 @@ data class GradingResult(
     }
 
     /**
-     * 앱이 계산한 점수를 3등급으로 접는다. 3단계 이상은 자기채점 노이즈만 늘린다.
-     * 필수 요소를 하나라도 틀리게 기억하고 있으면 완전재현으로 보지 않는다 —
-     * 빠뜨린 것보다 틀리게 아는 쪽이 위험하다.
+     * 3등급으로 접는다. 필수 요소를 하나라도 **틀리게** 기억하고 있으면 완전재현으로
+     * 보지 않는다 — 빠뜨린 것보다 틀리게 아는 쪽이 위험하다.
      */
     fun gradeFor(sheet: ElementSheet): Grade {
         val score = computeScore(sheet)
@@ -172,3 +154,21 @@ data class GradingResult(
         }
     }
 }
+
+@Serializable
+data class Detail(
+    @SerialName("element_id") val elementId: String,
+    val reason: String = "",
+    val quote: String = ""
+)
+
+/** 2단계 — 판정은 그대로 두고 설명만 채운다. 늦게 와도 화면이 이미 서 있다. */
+@Serializable
+data class GradingDetails(
+    val details: List<Detail> = emptyList(),
+    val summary: String = "",
+    val advice: String = "",
+    /** 사진으로 낸 종이를 읽어 옮겨 적은 글. 글로 냈으면 비어 있다. */
+    val transcript: String = "",
+    @SerialName("review_original") val reviewOriginal: Boolean = false
+)

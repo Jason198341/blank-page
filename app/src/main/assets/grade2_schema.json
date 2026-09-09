@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["details", "summary", "advice", "transcript", "review_original"],
+  "properties": {
+    "details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["element_id", "reason", "quote"],
+        "properties": {
+          "element_id": { "type": "string" },
+          "reason": { "type": "string" },
+          "quote": { "type": "string" }
+        }
+      }
+    },
+    "summary": { "type": "string" },
+    "advice": { "type": "string" },
+    "transcript": { "type": "string" },
+    "review_original": { "type": "boolean" }
+  }
+}

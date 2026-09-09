@@ -52,12 +52,14 @@ object TermuxBridge {
     private val chunks = mutableMapOf<String, Array<String?>>()
 
     @Synchronized
-    fun collect(req: String, part: Int, parts: Int, json: String): String? {
-        val slots = chunks.getOrPut(req) { arrayOfNulls(parts) }
+    fun collect(req: String, part: Int, parts: Int, json: String, stage: Int = 1): String? {
+        // 같은 요청의 1단계와 2단계가 섞이지 않게 키를 나눈다
+        val key = "$req#$stage"
+        val slots = chunks.getOrPut(key) { arrayOfNulls(parts) }
         if (part !in slots.indices) return null
         slots[part] = json
         if (slots.any { it == null }) return null
-        chunks.remove(req)
+        chunks.remove(key)
         return slots.joinToString("") { it.orEmpty() }
     }
 

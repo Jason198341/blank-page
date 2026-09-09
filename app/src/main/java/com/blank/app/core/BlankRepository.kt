@@ -15,7 +15,9 @@ import com.blank.app.data.local.SubmissionKind
 import com.blank.app.data.prefs.SettingsStore
 import com.blank.app.domain.BlankJson
 import com.blank.app.domain.ElementSheet
-import com.blank.app.domain.GradingResult
+import com.blank.app.domain.GradingDetails
+import com.blank.app.domain.GradingStage1
+import com.blank.app.domain.Judgement
 import com.blank.app.domain.ReviewSchedule
 import com.blank.app.notify.Notifications
 import com.blank.app.notify.ScheduleSyncer
@@ -170,42 +172,68 @@ class BlankRepository(
 
     // ------------------------------------------------------------------ 채점 결과 반영
 
+    /**
+     * 1단계 — 판정이 도착했다. 여기서 점수·등급을 계산하고 다음 일정을 잡는다.
+     * 사용자는 이 시점(제출 후 7초쯤)에 결과와 원본을 본다. 설명은 아직 비어 있다.
+     */
     suspend fun applyGrading(submissionId: Long, json: String, raw: String) {
         val comparison = db.comparisons().bySubmission(submissionId) ?: return
-        val result = runCatching { BlankJson.decodeFromString<GradingResult>(json) }.getOrNull()
+        val result = runCatching { BlankJson.decodeFromString<GradingStage1>(json) }.getOrNull()
             ?: run { markFailed(submissionId, "채점 결과를 읽지 못했습니다"); return }
+        if (result.judgements.isEmpty()) { markFailed(submissionId, "판정이 비어 있습니다"); return }
 
-        // 채점 기준이 된 그 회차의 요소표로 점수를 다시 센다 (모델의 산수는 믿지 않는다)
-        val round = db.rounds().byId(comparison.roundId)
-        val revisionId = round?.revisionId?.takeIf { it != 0L }
-            ?: db.items().byId(round?.itemId ?: 0)?.currentRevisionId ?: 0
-        val sheet = runCatching {
-            BlankJson.decodeFromString<ElementSheet>(
-                db.revisions().byId(revisionId)?.sheetJson.orEmpty()
-            )
-        }.getOrDefault(ElementSheet())
-
+        val sheet = sheetFor(comparison.roundId)
         val grade = result.gradeFor(sheet)
         db.comparisons().update(
             comparison.copy(
                 hit = result.hits(),
-                total = if (sheet.elements.isNotEmpty()) sheet.elements.size
-                    else result.judgements.size.coerceAtLeast(comparison.total),
+                total = if (sheet.elements.isNotEmpty()) sheet.elements.size else result.judgements.size,
                 score = result.computeScore(sheet),
                 grade = grade,
                 suggestedGrade = grade,
                 judgementsJson = BlankJson.encodeToString(result.judgements),
                 extrasJson = BlankJson.encodeToString(result.extras),
-                transcript = result.transcript,
-                summary = result.summary,
-                advice = result.nextAction.advice,
-                reviewOriginal = result.reviewOriginal,
                 status = "OK",
                 failReason = null,
                 rawText = raw
             )
         )
         applyScheduleAdjustment(comparison.roundId, grade)
+    }
+
+    /**
+     * 2단계 — 설명이 도착했다. **판정은 건드리지 않는다.** element_id 로 맞춰 이유·인용만
+     * 채워 넣는다. 늦게 와도 화면은 이미 서 있고, 안 와도 판정과 점수는 남는다.
+     */
+    suspend fun applyGradingDetails(submissionId: Long, json: String) {
+        val comparison = db.comparisons().bySubmission(submissionId) ?: return
+        val details = runCatching { BlankJson.decodeFromString<GradingDetails>(json) }.getOrNull() ?: return
+        val judgements = runCatching {
+            BlankJson.decodeFromString<List<Judgement>>(comparison.judgementsJson)
+        }.getOrDefault(emptyList())
+        val byId = details.details.associateBy { it.elementId }
+        val merged = judgements.map { judgement ->
+            byId[judgement.elementId]?.let { judgement.copy(reason = it.reason, quote = it.quote) } ?: judgement
+        }
+        db.comparisons().update(
+            comparison.copy(
+                judgementsJson = BlankJson.encodeToString(merged),
+                transcript = details.transcript,
+                summary = details.summary,
+                advice = details.advice,
+                reviewOriginal = details.reviewOriginal
+            )
+        )
+    }
+
+    /** 그 회차가 붙든 리비전의 요소표. 채점 기준은 알림이 나간 시점의 원본이다. */
+    private suspend fun sheetFor(roundId: Long): ElementSheet {
+        val round = db.rounds().byId(roundId)
+        val revisionId = round?.revisionId?.takeIf { it != 0L }
+            ?: db.items().byId(round?.itemId ?: 0)?.currentRevisionId ?: 0
+        return runCatching {
+            BlankJson.decodeFromString<ElementSheet>(db.revisions().byId(revisionId)?.sheetJson.orEmpty())
+        }.getOrDefault(ElementSheet())
     }
 
     suspend fun markFailed(submissionId: Long, reason: String) {

@@ -223,9 +223,13 @@ private fun Summary(state: DiffState) {
             Tally("틀림", state.rows.count { it.verdict == Verdict.WRONG }, DiffWrong)
             Tally("덧붙임", state.extras.size, DiffExtra)
         }
-        state.comparison?.summary?.takeIf { it.isNotBlank() }?.let {
-            Spacer(Modifier.height(14.dp))
-            Text(it, style = MaterialTheme.typography.bodyLarge, color = TextSecondary)
+        val summary = state.comparison?.summary.orEmpty()
+        Spacer(Modifier.height(14.dp))
+        if (summary.isNotBlank()) {
+            Text(summary, style = MaterialTheme.typography.bodyLarge, color = TextSecondary)
+        } else {
+            // 판정은 이미 나왔다. 설명은 뒤에서 채워지는 중이라 화면을 붙잡아 두지 않는다.
+            Text("설명을 채우는 중…", style = MaterialTheme.typography.bodyMedium, color = TextTertiary)
         }
     }
 }

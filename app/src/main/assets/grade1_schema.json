@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["judgements", "extras"],
+  "properties": {
+    "judgements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["element_id", "verdict"],
+        "properties": {
+          "element_id": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["correct", "missing", "wrong", "order_error"] }
+        }
+      }
+    },
+    "extras": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "kind"],
+        "properties": {
+          "text": { "type": "string" },
+          "kind": { "type": "string", "enum": ["correct_addition", "harmless", "contradiction"] }
+        }
+      }
+    }
+  }
+}

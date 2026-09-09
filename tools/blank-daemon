@@ -1,0 +1,40 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# blank watch 상시 가동 데몬 — 죽으면 자동 재시작, 도즈 방지 웨이크락 유지
+#
+# 이게 없으면 채점 요청마다 Termux 의 RunCommandService 가 콜드스타트하고,
+# 알림이 뜨는 아침 8시처럼 폰이 자고 있을 때는 도즈에 걸려 채점이 통째로 밀린다.
+# 데몬이 깨어 있으면 요청 파일이 떨어지고 1초 안에 주워간다.
+LOG="$HOME/.blank/watch.log"
+PID="$HOME/.blank/watch.pid"
+mkdir -p "$HOME/.blank"
+
+case "${1:-start}" in
+  start)
+    if [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null; then
+      echo "이미 실행 중 (pid $(cat "$PID"))"; exit 0
+    fi
+    command -v termux-wake-lock >/dev/null && termux-wake-lock
+    nohup bash -c '
+      while true; do
+        "$HOME/bin/blank" watch
+        echo "[$(date "+%F %T")] watch 종료 → 3초 뒤 재시작" >&2
+        sleep 3
+      done
+    ' >> "$LOG" 2>&1 &
+    echo $! > "$PID"
+    echo "blank watch 상시 가동 시작 (pid $(cat "$PID"))  로그: $LOG"
+    ;;
+  stop)
+    [ -f "$PID" ] && kill "$(cat "$PID")" 2>/dev/null
+    pkill -f "blank watch" 2>/dev/null
+    rm -f "$PID"; echo "중지"
+    ;;
+  status)
+    if [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null; then
+      echo "가동 중 (pid $(cat "$PID"))"; tail -5 "$LOG"
+    else
+      echo "정지 상태"
+    fi
+    ;;
+  log) tail -n 40 -f "$LOG" ;;
+esac

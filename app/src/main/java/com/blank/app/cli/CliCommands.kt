@@ -28,11 +28,15 @@ object CliCommands {
                 val part = intent.getIntExtra("part", 0)
                 val parts = intent.getIntExtra("parts", 1)
                 val piece = intent.getStringExtra("json").orEmpty()
-                val whole = TermuxBridge.collect(req, part, parts, piece)
+                val stageOf = intent.getIntExtra("stage", 1)
+                val whole = TermuxBridge.collect(req, part, parts, piece, stageOf)
                     ?: return "ok: part $part/$parts"
+                // stage 1 = 판정(점수·일정이 여기서 정해진다), stage 2 = 설명만 채우기
                 when (val target = route(req)) {
                     is Route.Normalize -> repo.applyNormalization(target.itemId, whole)
-                    is Route.Grade -> repo.applyGrading(target.submissionId, whole, whole)
+                    is Route.Grade ->
+                        if (stageOf >= 2) repo.applyGradingDetails(target.submissionId, whole)
+                        else repo.applyGrading(target.submissionId, whole, whole)
                     null -> return "error: 알 수 없는 요청 id ($req)"
                 }
                 TermuxBridge.emit(TermuxBridge.Event.Done(req, whole))

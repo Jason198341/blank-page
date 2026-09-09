@@ -46,13 +46,14 @@ send() { # send <cmd> <req> [extra am args...]
      -e cmd "$cmd" -e req "$req" "$@" >/dev/null 2>&1
 }
 
-send_json() { # send_json <req> <json>
-  local req="$1" json="$2" len i n part
+send_json() { # send_json <req> <json> [추가 am 인자...]
+  local req="$1" json="$2"; shift 2
+  local len i n part
   len=${#json}
   n=$(( (len + CHUNK - 1) / CHUNK )); [ "$n" -lt 1 ] && n=1
   for (( i=0; i<n; i++ )); do
     part="${json:$((i*CHUNK)):$CHUNK}"
-    send result "$req" --ei part "$i" --ei parts "$n" -e json "$part"
+    send result "$req" --ei part "$i" --ei parts "$n" -e json "$part" "$@"
     sleep 0.15
   done
   log "sent $req in $n part(s), $len bytes"
@@ -64,6 +65,34 @@ claim() {
   [ -f "$f.done" ] && return 1
   : > "$f.done"
   return 0
+}
+
+# claude 한 번 호출해서 structured_output 만 돌려준다.
+#  - --output-format json (비스트리밍). 스트리밍은 조각이 수백 개라 폰에서 직렬화 비용만 더 든다.
+#  - 측정하니 wall 의 90% 가 API 생성 시간이고 CLI 기동은 1.5초뿐이다. 그래서 상주 프로세스로
+#    기동을 없애는 대신, 출력 토큰을 줄이는 쪽(2단계 분리)으로 간다.
+ask() { # ask <prompt파일> <schema파일> <user메시지> [추가 플래그...]
+  local sys="$1" schema="$2" user="$3"; shift 3
+  local out
+  out=$(timeout 240 claude -p "$user" \
+        --output-format json \
+        --json-schema "$(cat "$schema")" \
+        --system-prompt "$(cat "$sys")" \
+        --model "$MODEL" \
+        --effort low \
+        --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+        --no-session-persistence \
+        "$@" \
+        --permission-mode dontAsk < /dev/null 2>>"$LOG")
+  [ -z "$out" ] && return 1
+  local json
+  json=$(printf '%s' "$out" | jq -c '.structured_output // empty' 2>/dev/null)
+  if [ -z "$json" ] || [ "$json" = "null" ]; then
+    json=$(printf '%s' "$out" | jq -r '.result // empty' 2>/dev/null \
+           | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//' | jq -c . 2>/dev/null)
+  fi
+  [ -z "$json" ] && return 1
+  printf '%s' "$json"
 }
 
 run_one() {
@@ -110,9 +139,9 @@ $bottom
   fi
   [ -f "$sys" ] || { send failed "$req" -e reason "프롬프트 파일이 없습니다: $sys"; log "missing $sys"; return 1; }
 
-  send status "$req" -e text "채점 중"
   local t0=$(date +%s)
   log "run $op req=$req model=$model image=${image:-none}"
+  MODEL="$model"
 
   # 사진이 있으면 Read 도구만 열어 그 폴더를 읽힌다. 없으면 도구를 통째로 끈다.
   local -a tools=()
@@ -122,47 +151,39 @@ $bottom
     tools=(--tools "")
   fi
 
-  local out rc
-  # 속도: 기본 호출은 57초였다. 범인은 둘이다 —
-  #  (1) MCP 설정 로딩과 세션 저장에 26초. 채점은 도구도 대화 이력도 안 쓰므로 통째로 끈다.
-  #  (2) adaptive thinking 에 7초. effort low 로 내려도 판정이 한 글자도 안 바뀐다(실측).
-  # 모델은 opus-5 를 유지한다. sonnet 으로 내리면 "미토콘드리아" 만 쓴 답을
-  # "미토콘드리아 기질" 로 봐주기 시작한다 — 후한 채점은 이 앱을 무의미하게 만든다.
-  out=$(claude -p "$user" \
-        --output-format json \
-        --json-schema "$(cat "$schema")" \
-        --system-prompt "$(cat "$sys")" \
-        --model "$model" \
-        --effort low \
-        --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
-        --no-session-persistence \
-        "${tools[@]}" \
-        --permission-mode dontAsk < /dev/null 2>>"$LOG")
-  rc=$?
-  if [ $rc -ne 0 ] || [ -z "$out" ]; then
-    send failed "$req" -e reason "claude 실행 실패 (rc=$rc)"
-    log "claude failed rc=$rc"
-    return 1
+  if [ "$op" = "normalize" ]; then
+    send status "$req" -e text "정규화 중"
+    local json
+    json=$(ask "$sys" "$schema" "$user" "${tools[@]}") || {
+      send failed "$req" -e reason "정규화 실패"; log "normalize failed $req"; return 1; }
+    printf '%s' "$json" > "$BR/last_$req.json"
+    log "done $req in $(( $(date +%s) - t0 ))s"
+    send_json "$req" "$json"
+    return 0
   fi
 
-  # structured_output 을 먼저 본다. 없으면 result 문자열에서 JSON 을 긁어낸다.
-  local json
-  json=$(printf '%s' "$out" | jq -c '.structured_output // empty' 2>/dev/null)
-  if [ -z "$json" ] || [ "$json" = "null" ]; then
-    json=$(printf '%s' "$out" | jq -r '.result // empty' 2>/dev/null \
-           | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//' \
-           | jq -c . 2>/dev/null)
-  fi
-  if [ -z "$json" ]; then
-    send failed "$req" -e reason "채점 결과를 읽지 못했습니다 (JSON 아님)"
-    log "unparseable output: $(printf '%s' "$out" | head -c 400)"
-    return 1
-  fi
+  # ---- 채점은 두 번에 나눈다 ----
+  # 판정만 뽑으면 6~8초, 설명까지 한꺼번에 뽑으면 15~18초다(실측). 앱은 판정만 있으면
+  # 점수·등급을 스스로 계산하고 원본을 열 수 있으므로, 사용자는 8초에 결과를 본다.
+  # 이유·요약·조언은 그 뒤에 조용히 채워 넣는다.
+  send status "$req" -e text "판정 중"
+  local v1
+  v1=$(ask "$ASSETS/grade1_prompt.txt" "$ASSETS/grade1_schema.json" "$user" "${tools[@]}") || {
+    send failed "$req" -e reason "채점 실패 (1단계)"; log "stage1 failed $req"; return 1; }
+  printf '%s' "$v1" > "$BR/last_$req.json"
+  log "stage1 $req in $(( $(date +%s) - t0 ))s"
+  send_json "$req" "$v1" --ei stage 1
 
-  # 터미널에서 눈으로 확인할 수 있게 마지막 결과를 남긴다 (디버깅용)
-  printf '%s' "$json" > "$BR/last_$req.json"
-  log "done $req in $(( $(date +%s) - t0 ))s"
-  send_json "$req" "$json"
+  # 2단계: 1단계 판정을 그대로 물려주고 설명만 받는다 (판정을 다시 내리지 못하게 못박는다)
+  local t1=$(date +%s)
+  local user2="$user
+<판정>$v1</판정>"
+  local v2
+  v2=$(ask "$ASSETS/grade2_prompt.txt" "$ASSETS/grade2_schema.json" "$user2" "${tools[@]}") || {
+    log "stage2 failed $req (판정은 이미 전달됨)"; return 0; }
+  printf '%s' "$v2" > "$BR/last_${req}_2.json"
+  log "stage2 $req in $(( $(date +%s) - t1 ))s (합계 $(( $(date +%s) - t0 ))s)"
+  send_json "$req" "$v2" --ei stage 2
 }
 
 case "${1:-help}" in
@@ -176,7 +197,7 @@ case "${1:-help}" in
         [ -f "$f.done" ] && continue
         run_one "$f"
       done
-      sleep 3
+      sleep 1
     done ;;
   drain)
     for f in "$BR"/req_*.txt; do
