@@ -205,6 +205,17 @@ case "${1:-help}" in
       [ -f "$f.done" ] && continue
       run_one "$f"
     done ;;
+  # 앱이 살아서 브로드캐스트를 받는지, DB 에 뭐가 들었는지 확인한다.
+  # 앱 uid 에서는 am 이 리시버 반환값을 못 받아오므로, 앱이 파일에 쓰게 하고 그걸 읽는다.
+  ping|dump)
+    rm -f "$BR"/status_*.txt
+    am broadcast -n "$RECEIVER" -a "$ACTION" --include-stopped-packages -e cmd "$1" >/dev/null 2>&1
+    for _ in $(seq 1 20); do
+      f=$(ls -t "$BR"/status_*.txt 2>/dev/null | head -1)
+      [ -n "$f" ] && { echo "== 앱 응답 =="; cat "$f"; exit 0; }
+      sleep 0.5
+    done
+    echo "앱이 응답하지 않습니다 (설치 여부·강제종료 확인)"; exit 1 ;;
   log)   tail -n "${2:-40}" "$LOG" ;;
   clean) rm -f "$BR"/req_*.txt "$BR"/req_*.done; echo "cleaned" ;;
   *) cat <<'USAGE'
@@ -213,6 +224,8 @@ blank — 백지 앱 채점기
   blank run <요청파일>   요청 하나를 처리한다 (앱이 RUN_COMMAND 로 부른다)
   blank watch            RUN_COMMAND 가 막혔을 때 요청 폴더를 계속 훑는다
   blank drain            지금 밀려 있는 요청만 처리하고 끝낸다
+  blank ping             앱이 브로드캐스트를 받는지 확인
+  blank dump             앱 DB 상태(회차·채점 대기) 확인
   blank log [n]          최근 로그
   blank clean            요청 파일 정리
 USAGE

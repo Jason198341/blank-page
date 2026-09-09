@@ -151,6 +151,21 @@ object TermuxBridge {
         )
     }
 
+    /**
+     * 앱 상태를 Download/blank/status_<설치id>.txt 에 쓴다.
+     *
+     * 앱 uid 에서는 `am broadcast` 가 리시버의 반환값을 못 받아온다("sent without waiting
+     * for result"). 그래서 터미널이 앱 안을 볼 방법이 없었다. 앱이 자기가 만든 파일에
+     * 써 주면 터미널은 그냥 읽으면 된다 — 회신 경로가 살아 있는지 확인하는 유일한 창이다.
+     */
+    fun writeStatus(context: Context, body: String) {
+        runCatching {
+            val name = "status_${installId(context)}.txt"
+            val uri = findOwnFile(context, name) ?: insertFile(context, name) ?: return
+            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(body.toByteArray()) }
+        }
+    }
+
     // ------------------------------------------------------------------ MediaStore 쓰기
 
     private fun writeNewFile(context: Context, name: String, body: String): String? {
@@ -190,7 +205,6 @@ object TermuxBridge {
         }.getOrNull()
     }
 
-    @Suppress("unused")
     private fun findOwnFile(context: Context, name: String): Uri? {
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         return runCatching {

@@ -50,7 +50,41 @@ object CliCommands {
                 "ok"
             }
 
-            "ping" -> "pong"
+            "ping" -> {
+                TermuxBridge.writeStatus(context, "pong ${System.currentTimeMillis()}\n")
+                "pong"
+            }
+
+            // 터미널에서 앱 안을 들여다보는 유일한 창. 브로드캐스트가 실제로 앱에
+            // 닿았는지, 채점 결과가 DB 에 들어갔는지를 여기서 확인한다.
+            "dump" -> {
+                val db = AppContainer.get(context).db
+                val now = System.currentTimeMillis()
+                val items = db.items().activeCount()
+                val due = db.rounds().overdue(now)
+                val pending = db.comparisons().pending()
+                val body = buildString {
+                    append("blank app status @ ").append(now).append('\n')
+                    append("살아 있는 지식: ").append(items).append('\n')
+                    append("시각 지난 회차: ").append(due.size).append('\n')
+                    append("채점 대기: ").append(pending.size).append('\n')
+                    due.take(10).forEach {
+                        append("  round#").append(it.id)
+                            .append(" item=").append(it.itemId)
+                            .append(" 회차=").append(it.roundIndex)
+                            .append(" 상태=").append(it.state)
+                            .append(" 리비전=").append(it.revisionId).append('\n')
+                    }
+                    pending.take(10).forEach {
+                        append("  cmp#").append(it.id)
+                            .append(" sub=").append(it.submissionId)
+                            .append(" 상태=").append(it.status)
+                            .append(" 사유=").append(it.failReason ?: "-").append('\n')
+                    }
+                }
+                TermuxBridge.writeStatus(context, body)
+                "ok"
+            }
 
             else -> "error: 모르는 명령 ($cmd)"
         }
