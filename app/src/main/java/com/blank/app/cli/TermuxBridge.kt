@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -70,6 +71,19 @@ object TermuxBridge {
 
     fun hasPermission(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, PERMISSION) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * 설치마다 바뀌는 짧은 id. 앱을 재설치하면 새 앱은 옛 파일의 소유자가 아니라
+     * 그 파일을 못 본다. 같은 이름으로 다시 만들면 MediaStore 가 "(1)" 을 붙여
+     * 갈라지므로, 파일 이름에 이 id 를 박아 충돌 자체를 없앤다.
+     */
+    fun installId(context: Context): String {
+        val prefs = context.getSharedPreferences("blank_bridge", Context.MODE_PRIVATE)
+        prefs.getString("install_id", null)?.let { return it }
+        val fresh = UUID.randomUUID().toString().take(8)
+        prefs.edit().putString("install_id", fresh).apply()
+        return fresh
+    }
 
     fun readiness(context: Context): String? = when {
         !isInstalled(context) -> "Termux 가 설치돼 있지 않습니다."
