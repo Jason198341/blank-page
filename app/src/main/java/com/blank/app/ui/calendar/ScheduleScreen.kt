@@ -97,7 +97,8 @@ fun ScheduleScreen(
 
         LazyColumn(
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.weight(1f)
         ) {
             if (state.selectedRounds.isEmpty()) {
                 item {

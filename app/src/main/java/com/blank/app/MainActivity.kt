@@ -5,11 +5,11 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
 import com.blank.app.ui.nav.BlankNav
 import com.blank.app.ui.theme.BlankTheme
 
@@ -22,7 +22,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        // targetSdk 35 · Android 15 부터는 edge-to-edge 가 강제라
+        // setDecorFitsSystemWindows(true) 는 무시된다. 여백은 Scaffold 가 준다.
+        enableEdgeToEdge()
         pendingRoundId.value = intent.roundId()
         requestNotificationPermission()
         setContent {

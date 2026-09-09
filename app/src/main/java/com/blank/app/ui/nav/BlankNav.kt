@@ -1,7 +1,6 @@
 package com.blank.app.ui.nav
 
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Description
@@ -35,6 +34,7 @@ import com.blank.app.ui.result.DiffScreen
 import com.blank.app.ui.settings.SettingsScreen
 import com.blank.app.ui.theme.Accent
 import com.blank.app.ui.theme.Bg
+import com.blank.app.ui.theme.BgRecall
 import com.blank.app.ui.theme.TextTertiary
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
@@ -63,7 +63,8 @@ fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
     val showTabs = route in TABS.map { it.route }
 
     Scaffold(
-        containerColor = Bg,
+        // 재현 화면은 더 검다. 상태바 뒤까지 그 색이 이어져야 화면이 갈라져 보이지 않는다.
+        containerColor = if (route?.startsWith("recall/") == true) BgRecall else Bg,
         bottomBar = {
             if (showTabs) NavigationBar(containerColor = Bg) {
                 TABS.forEach { tab ->
@@ -94,7 +95,10 @@ fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
         NavHost(
             navController = nav,
             startDestination = "today",
-            modifier = Modifier.padding(if (showTabs) padding else androidx.compose.foundation.layout.PaddingValues(0.dp))
+            // 탭이 없는 화면에도 여백을 그대로 넘긴다. 안 넘기면 상태바가 제목을 먹고
+            // 제스처바가 제출 버튼을 깔고 앉는다 (탭바가 없을 땐 아래 여백이
+            // 시스템 제스처바 높이만큼만 잡힌다).
+            modifier = Modifier.padding(padding)
         ) {
             composable("today") {
                 TodayScreen(
