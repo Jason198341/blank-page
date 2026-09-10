@@ -6,13 +6,16 @@ import com.blank.app.data.local.AppDatabase
 import com.blank.app.data.local.ComparisonEntity
 import com.blank.app.data.local.Engine
 import com.blank.app.data.local.Grade
-import com.blank.app.data.local.ItemEntity
 import com.blank.app.data.local.ItemKind
+import com.blank.app.data.local.NoteEntity
 import com.blank.app.data.local.RevisionEntity
 import com.blank.app.data.local.RoundState
 import com.blank.app.data.local.SubmissionEntity
 import com.blank.app.data.local.SubmissionKind
 import com.blank.app.data.prefs.SettingsStore
+import com.blank.app.data.vault.Frontmatter
+import com.blank.app.data.vault.VaultStore
+import com.blank.app.data.vault.VaultSync
 import com.blank.app.domain.BlankJson
 import com.blank.app.domain.ElementSheet
 import com.blank.app.domain.GradingDetails
@@ -22,111 +25,125 @@ import com.blank.app.domain.ReviewSchedule
 import com.blank.app.notify.Notifications
 import com.blank.app.notify.ScheduleSyncer
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 
 /**
- * 앱의 모든 쓰기가 지나는 곳. 화면은 여기 말고 DB 를 직접 건드리지 않는다.
- *
- * 특히 "회차 상태 변경 → 알람 재무장" 은 늘 짝으로 일어나야 한다. 한쪽만 하면
- * 알림이 안 오거나 이미 끝낸 회차의 알림이 뜬다.
+ * 앱의 모든 쓰기가 지나는 곳. 노트 본문은 **볼트의 .md 파일이 진실**이고, Room 은 색인 +
+ * 복습 상태만 든다. 그래서 노트를 고치면 파일을 먼저 쓰고 색인을 맞춘다.
  */
-/** 사용자가 고른 종류를 정규화기에 그대로 넘긴다 — 무엇을 "맞았다" 로 볼지가 여기서 갈린다. */
-private fun ItemKind.promptLabel(): String = when (this) {
-    ItemKind.STRUCTURE -> "diagram"
-    ItemKind.LIST -> "list"
-    ItemKind.SEQUENCE -> "procedure"
-    ItemKind.VALUE -> "numeric"
-}
-
 class BlankRepository(
     private val context: Context,
     private val db: AppDatabase,
     private val settings: SettingsStore
 ) {
 
-    // ------------------------------------------------------------------ 등록
+    init {
+        // 볼트 동기화가 새 복습 노트를 발견하면 CLI 정규화를 걸도록 연결
+        VaultSync.onNeedsNormalize = { noteId, title, body, kind ->
+            TermuxBridge.requestNormalize(context, noteId, title, body, kind)
+        }
+    }
+
+    // ------------------------------------------------------------------ 노트 만들기·고치기
 
     /**
-     * 지식을 등록하고 5회차를 한 번에 깐다.
-     *
-     * 요소표는 먼저 줄 단위로 대충 만들어 두고, CLI 정규화 결과가 돌아오면 갈아끼운다.
-     * 등록이 터미널 상태에 인질로 잡히면 안 된다 — 오늘 입력하는 마찰이 이 앱의 목숨이다.
+     * 새 노트를 볼트에 .md 로 만든다. 앱에서 만든 노트는 복습이 기본(review=true) —
+     * 참조용으로 두려면 [referenceOnly] 를 켠다.
      */
-    suspend fun createItem(title: String, body: String, kind: ItemKind, tags: String): Long {
+    suspend fun createNote(
+        title: String,
+        body: String,
+        kind: ItemKind,
+        tags: List<String>,
+        referenceOnly: Boolean,
+        folder: String
+    ): String? {
         val now = System.currentTimeMillis()
-        val itemId = db.items().insert(
-            ItemEntity(title = title, body = body, kind = kind, tags = tags, createdAt = now, updatedAt = now)
-        )
-        val revisionId = db.revisions().insert(
-            RevisionEntity(
-                itemId = itemId, revision = 1, title = title, body = body, kind = kind,
-                sheetJson = BlankJson.encodeToString(ElementSheet.fromLines(title, body)),
-                normalized = false, createdAt = now
+        val id = java.util.UUID.randomUUID().toString()
+        val content = Frontmatter.serialize(id, !referenceOnly, tags, kind, now, ensureHeading(title, body))
+        val fileName = sanitize(title)
+        val vf = VaultStore.create(context, folder, fileName, content) ?: return null
+
+        db.notes().upsert(
+            NoteEntity(
+                id = id, relPath = vf.relPath, title = title, body = body, kind = kind,
+                tags = tags.joinToString(","), referenceOnly = referenceOnly,
+                linkTitlesJson = BlankJson.encodeToString(Frontmatter.linkTitles(body)),
+                fileMtime = vf.lastModified, contentHash = ("---$body").hashCode().toString(),
+                createdAt = now, updatedAt = now
             )
         )
-        db.items().byId(itemId)?.let { db.items().update(it.copy(currentRevisionId = revisionId)) }
+        if (!referenceOnly) {
+            db.rounds().insertAll(ReviewSchedule.plan(id, now, settings.get().notifyHour))
+            db.notes().update(db.notes().byId(id)!!.copy(scheduled = true))
+            ScheduleSyncer.resync(context)
+            TermuxBridge.requestNormalize(context, id, title, body, kind.name.lowercase())
+        }
+        return id
+    }
 
-        val notifyHour = settings.get().notifyHour
-        db.rounds().insertAll(ReviewSchedule.plan(itemId, now, notifyHour))
+    /** 노트 본문을 고쳐 파일에 되쓴다. 색인도 갱신하고 정규화를 다시 건다. */
+    suspend fun editNote(noteId: String, title: String, body: String, kind: ItemKind, tags: List<String>) {
+        val note = db.notes().byId(noteId) ?: return
+        val now = System.currentTimeMillis()
+        val content = Frontmatter.serialize(noteId, !note.referenceOnly, tags, kind, note.createdAt, ensureHeading(title, body))
+        VaultStore.findByPath(context, note.relPath)?.let { VaultStore.write(context, it.uri, content) }
+        db.notes().update(
+            note.copy(
+                title = title, body = body, kind = kind, tags = tags.joinToString(","),
+                normalized = false,
+                linkTitlesJson = BlankJson.encodeToString(Frontmatter.linkTitles(body)),
+                contentHash = content.hashCode().toString(), updatedAt = now
+            )
+        )
+        if (!note.referenceOnly && body.isNotBlank()) {
+            TermuxBridge.requestNormalize(context, noteId, title, body, kind.name.lowercase())
+        }
+    }
+
+    /**
+     * 단순 참조용 ↔ 복습 대상 전환.
+     *  - 참조용으로: 예정 회차를 접는다. 파일 프론트매터 review:false.
+     *  - 복습으로: 회차가 없으면 오늘부터 새 5회차. 파일 review:true + 정규화.
+     */
+    suspend fun setReferenceOnly(noteId: String, referenceOnly: Boolean) {
+        val note = db.notes().byId(noteId) ?: return
+        val now = System.currentTimeMillis()
+        db.notes().update(note.copy(referenceOnly = referenceOnly, updatedAt = now))
+
+        // 파일 프론트매터 되쓰기
+        VaultStore.findByPath(context, note.relPath)?.let { doc ->
+            val content = Frontmatter.serialize(
+                noteId, !referenceOnly, note.tags.split(",").map { it.trim() }.filter { it.isNotEmpty() },
+                note.kind, note.createdAt, ensureHeading(note.title, note.body)
+            )
+            VaultStore.write(context, doc.uri, content)
+        }
+
+        if (referenceOnly) {
+            db.rounds().skipPendingOf(noteId)
+        } else if (db.rounds().countForNote(noteId) == 0) {
+            db.rounds().insertAll(ReviewSchedule.plan(noteId, now, settings.get().notifyHour))
+            db.notes().update(db.notes().byId(noteId)!!.copy(scheduled = true))
+            if (note.body.isNotBlank())
+                TermuxBridge.requestNormalize(context, noteId, note.title, note.body, note.kind.name.lowercase())
+        }
         ScheduleSyncer.resync(context)
-
-        TermuxBridge.requestNormalize(context, itemId, title, body, kind.promptLabel())
-        return itemId
     }
 
-    /** 원본 수정. 기존 리비전은 절대 건드리지 않고 한 줄 새로 쌓는다. */
-    suspend fun editItem(itemId: Long, title: String, body: String, kind: ItemKind, tags: String) {
-        val item = db.items().byId(itemId) ?: return
-        val now = System.currentTimeMillis()
-        val revision = (db.revisions().maxRevision(itemId) ?: 0) + 1
-        val revisionId = db.revisions().insert(
-            RevisionEntity(
-                itemId = itemId, revision = revision, title = title, body = body, kind = kind,
-                sheetJson = BlankJson.encodeToString(ElementSheet.fromLines(title, body)),
-                normalized = false, createdAt = now
-            )
-        )
-        db.items().update(
-            item.copy(
-                title = title, body = body, kind = kind, tags = tags,
-                currentRevisionId = revisionId, updatedAt = now
-            )
-        )
-        TermuxBridge.requestNormalize(context, itemId, title, body, kind.promptLabel())
-    }
+    // ------------------------------------------------------------------ 정규화 결과
 
-    /** CLI 정규화 결과를 현재 리비전에 붙인다. 이미 알림이 나간 회차의 기준은 안 바꾼다. */
-    suspend fun applyNormalization(itemId: Long, json: String) {
+    suspend fun applyNormalization(noteId: String, json: String) {
         val sheet = runCatching { BlankJson.decodeFromString<ElementSheet>(json) }.getOrNull() ?: return
         if (sheet.elements.isEmpty()) return
-        val item = db.items().byId(itemId) ?: return
-        val revision = db.revisions().byId(item.currentRevisionId) ?: return
-        if (revision.normalized) return
-        // 리비전 행은 불변이라 UPDATE 하지 않는다. 정규화본을 다음 리비전으로 쌓는다.
-        val now = System.currentTimeMillis()
-        val next = (db.revisions().maxRevision(itemId) ?: 0) + 1
-        val newId = db.revisions().insert(
-            revision.copy(
-                id = 0, revision = next,
-                sheetJson = BlankJson.encodeToString(sheet), normalized = true, createdAt = now
-            )
-        )
-        db.items().update(item.copy(currentRevisionId = newId, updatedAt = now))
+        val note = db.notes().byId(noteId) ?: return
+        db.notes().update(note.copy(sheetJson = BlankJson.encodeToString(sheet), normalized = true))
     }
 
     // ------------------------------------------------------------------ 제출
 
-    /**
-     * 재현물 제출. 채점을 기다리지 않고 먼저 로컬에 박아 둔다 —
-     * 터미널이 죽어 있어도 "제출했다" 는 사실은 남아야 한다.
-     */
     suspend fun submit(
-        roundId: Long,
-        text: String,
-        imagePath: String?,
-        usedHint: Boolean,
-        elapsedMs: Long,
-        gaveUp: Boolean
+        roundId: Long, text: String, imagePath: String?,
+        usedHint: Boolean, elapsedMs: Long, gaveUp: Boolean
     ): Long {
         val round = db.rounds().byId(roundId) ?: return -1
         val now = System.currentTimeMillis()
@@ -136,46 +153,46 @@ class BlankRepository(
             imagePath != null -> SubmissionKind.IMAGE
             else -> SubmissionKind.TEXT
         }
+        // 알림 전에 들어온 회차면 지금 원본을 스냅샷으로 얼린다
+        val revisionId = if (round.revisionId != 0L) round.revisionId else freeze(round.noteId, now)
         val submissionId = db.submissions().insert(
             SubmissionEntity(
-                roundId = roundId, itemId = round.itemId, kind = kind, text = text,
+                roundId = roundId, noteId = round.noteId, kind = kind, text = text,
                 imagePath = imagePath, usedHint = usedHint, elapsedMs = elapsedMs, submittedAt = now
             )
         )
-        db.rounds().update(round.copy(state = RoundState.DONE, completedAt = now))
+        db.rounds().update(round.copy(state = RoundState.DONE, revisionId = revisionId, completedAt = now))
         Notifications.cancel(context, roundId)
         ScheduleSyncer.resync(context)
 
-        // 채점 기준은 이 회차가 붙든 리비전. 알림 전에 들어온 회차면 현재 리비전을 쓴다.
-        val item = db.items().byId(round.itemId)
-        val revisionId = if (round.revisionId != 0L) round.revisionId else item?.currentRevisionId ?: 0
         val sheetJson = db.revisions().byId(revisionId)?.sheetJson.orEmpty()
-
         db.comparisons().insert(
             ComparisonEntity(
                 submissionId = submissionId, roundId = roundId,
-                total = runCatching { BlankJson.decodeFromString<ElementSheet>(sheetJson).elements.size }
-                    .getOrDefault(0),
+                total = runCatching { BlankJson.decodeFromString<ElementSheet>(sheetJson).elements.size }.getOrDefault(0),
                 engine = Engine.CLI, status = "PENDING", createdAt = now
             )
         )
-
         val recall = if (gaveUp) "모르겠습니다. 아무것도 기억나지 않습니다." else text
-        val dispatch = TermuxBridge.requestGrade(context, submissionId, sheetJson, recall, imagePath)
-        dispatch.getOrNull()?.note?.let { note ->
-            db.comparisons().bySubmission(submissionId)?.let {
-                db.comparisons().update(it.copy(failReason = note))
+        TermuxBridge.requestGrade(context, submissionId, sheetJson, recall, imagePath)
+            .getOrNull()?.note?.let { note ->
+                db.comparisons().bySubmission(submissionId)?.let { db.comparisons().update(it.copy(failReason = note)) }
             }
-        }
         return submissionId
     }
 
-    // ------------------------------------------------------------------ 채점 결과 반영
+    /** 현재 노트 본문·요소표를 리비전으로 얼린다 */
+    private suspend fun freeze(noteId: String, now: Long): Long {
+        val note = db.notes().byId(noteId) ?: return 0
+        val rev = (db.revisions().maxRevision(noteId) ?: 0) + 1
+        return db.revisions().insert(
+            RevisionEntity(noteId = noteId, revision = rev, title = note.title, body = note.body,
+                kind = note.kind, sheetJson = note.sheetJson, createdAt = now)
+        )
+    }
 
-    /**
-     * 1단계 — 판정이 도착했다. 여기서 점수·등급을 계산하고 다음 일정을 잡는다.
-     * 사용자는 이 시점(제출 후 7초쯤)에 결과와 원본을 본다. 설명은 아직 비어 있다.
-     */
+    // ------------------------------------------------------------------ 채점 결과
+
     suspend fun applyGrading(submissionId: Long, json: String, raw: String) {
         val comparison = db.comparisons().bySubmission(submissionId) ?: return
         val result = runCatching { BlankJson.decodeFromString<GradingStage1>(json) }.getOrNull()
@@ -188,23 +205,15 @@ class BlankRepository(
             comparison.copy(
                 hit = result.hits(),
                 total = if (sheet.elements.isNotEmpty()) sheet.elements.size else result.judgements.size,
-                score = result.computeScore(sheet),
-                grade = grade,
-                suggestedGrade = grade,
+                score = result.computeScore(sheet), grade = grade, suggestedGrade = grade,
                 judgementsJson = BlankJson.encodeToString(result.judgements),
                 extrasJson = BlankJson.encodeToString(result.extras),
-                status = "OK",
-                failReason = null,
-                rawText = raw
+                status = "OK", failReason = null, rawText = raw
             )
         )
         applyScheduleAdjustment(comparison.roundId, grade)
     }
 
-    /**
-     * 2단계 — 설명이 도착했다. **판정은 건드리지 않는다.** element_id 로 맞춰 이유·인용만
-     * 채워 넣는다. 늦게 와도 화면은 이미 서 있고, 안 와도 판정과 점수는 남는다.
-     */
     suspend fun applyGradingDetails(submissionId: Long, json: String) {
         val comparison = db.comparisons().bySubmission(submissionId) ?: return
         val details = runCatching { BlankJson.decodeFromString<GradingDetails>(json) }.getOrNull() ?: return
@@ -212,65 +221,54 @@ class BlankRepository(
             BlankJson.decodeFromString<List<Judgement>>(comparison.judgementsJson)
         }.getOrDefault(emptyList())
         val byId = details.details.associateBy { it.elementId }
-        val merged = judgements.map { judgement ->
-            byId[judgement.elementId]?.let { judgement.copy(reason = it.reason, quote = it.quote) } ?: judgement
-        }
+        val merged = judgements.map { j -> byId[j.elementId]?.let { j.copy(reason = it.reason, quote = it.quote) } ?: j }
         db.comparisons().update(
             comparison.copy(
                 judgementsJson = BlankJson.encodeToString(merged),
-                transcript = details.transcript,
-                summary = details.summary,
-                advice = details.advice,
-                reviewOriginal = details.reviewOriginal
+                transcript = details.transcript, summary = details.summary,
+                advice = details.advice, reviewOriginal = details.reviewOriginal
             )
         )
     }
 
-    /** 그 회차가 붙든 리비전의 요소표. 채점 기준은 알림이 나간 시점의 원본이다. */
-    private suspend fun sheetFor(roundId: Long): ElementSheet {
-        val round = db.rounds().byId(roundId)
-        val revisionId = round?.revisionId?.takeIf { it != 0L }
-            ?: db.items().byId(round?.itemId ?: 0)?.currentRevisionId ?: 0
-        return runCatching {
-            BlankJson.decodeFromString<ElementSheet>(db.revisions().byId(revisionId)?.sheetJson.orEmpty())
-        }.getOrDefault(ElementSheet())
-    }
-
     suspend fun markFailed(submissionId: Long, reason: String) {
-        db.comparisons().bySubmission(submissionId)?.let {
-            db.comparisons().update(it.copy(status = "FAILED", failReason = reason))
-        }
+        db.comparisons().bySubmission(submissionId)?.let { db.comparisons().update(it.copy(status = "FAILED", failReason = reason)) }
     }
 
     suspend fun markStatus(submissionId: Long, text: String) {
-        db.comparisons().bySubmission(submissionId)?.let {
-            db.comparisons().update(it.copy(failReason = text))
-        }
+        db.comparisons().bySubmission(submissionId)?.let { db.comparisons().update(it.copy(failReason = text)) }
     }
 
-    /**
-     * 사용자가 등급을 뒤집는다. 표시 등급만 바뀌고 **일정 계산은 원래 판정 기준**으로
-     * 이미 끝나 있다 — 그래야 자기기만에 이득이 없다.
-     */
     suspend fun overrideGrade(submissionId: Long, grade: Grade) {
-        db.comparisons().bySubmission(submissionId)?.let {
-            db.comparisons().update(it.copy(grade = grade))
-        }
+        db.comparisons().bySubmission(submissionId)?.let { db.comparisons().update(it.copy(grade = grade)) }
+    }
+
+    private suspend fun sheetFor(roundId: Long): ElementSheet {
+        val round = db.rounds().byId(roundId)
+        val revisionId = round?.revisionId?.takeIf { it != 0L }
+        val sheetJson = revisionId?.let { db.revisions().byId(it)?.sheetJson }
+            ?: db.notes().byId(round?.noteId ?: "")?.sheetJson.orEmpty()
+        return runCatching { BlankJson.decodeFromString<ElementSheet>(sheetJson) }.getOrDefault(ElementSheet())
     }
 
     private suspend fun applyScheduleAdjustment(roundId: Long, grade: Grade) {
         val round = db.rounds().byId(roundId) ?: return
         val now = System.currentTimeMillis()
         val notifyHour = settings.get().notifyHour
-        val future = db.rounds().futureOf(round.itemId, now)
-        val adjustment = ReviewSchedule.adjust(round, grade, future, now, notifyHour)
-
-        adjustment.retry?.let { db.rounds().insert(it) }
-        adjustment.shifted.forEach { db.rounds().update(it) }
-
-        if (ReviewSchedule.graduates(round, grade)) {
-            db.items().setArchived(round.itemId, true, now)
-        }
+        val future = db.rounds().futureOf(round.noteId, now)
+        val adj = ReviewSchedule.adjust(round, grade, future, now, notifyHour)
+        adj.retry?.let { db.rounds().insert(it) }
+        adj.shifted.forEach { db.rounds().update(it) }
+        if (ReviewSchedule.graduates(round, grade)) db.notes().setArchived(round.noteId, true, now)
         ScheduleSyncer.resync(context)
     }
+
+    // ------------------------------------------------------------------ 유틸
+
+    private fun ensureHeading(title: String, body: String): String =
+        if (body.lineSequence().any { it.trimStart().startsWith("#") }) body else "# $title\n\n$body"
+
+    private fun sanitize(title: String): String =
+        title.replace(Regex("""[/\\:*?"<>|]"""), " ").trim().ifBlank { "note" }.take(60)
+
 }

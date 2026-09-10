@@ -65,15 +65,15 @@ class DiffViewModel(app: Application) : AndroidViewModel(app) {
         val db = container.db
         val submission = db.submissions().byId(submissionId) ?: return
         val round = db.rounds().byId(submission.roundId)
-        val item = db.items().byId(submission.itemId)
+        val note = db.notes().byId(submission.noteId)
         val comparison = db.comparisons().bySubmission(submissionId)
 
-        val revisionId = round?.revisionId?.takeIf { it != 0L } ?: item?.currentRevisionId ?: 0
-        val sheet = runCatching {
-            BlankJson.decodeFromString<ElementSheet>(
-                db.revisions().byId(revisionId)?.sheetJson.orEmpty()
-            )
-        }.getOrDefault(ElementSheet())
+        val revisionId = round?.revisionId?.takeIf { it != 0L } ?: 0L
+        val sheetJson = if (revisionId != 0L)
+            db.revisions().byId(revisionId)?.sheetJson.orEmpty()
+        else note?.sheetJson.orEmpty()
+        val sheet = runCatching { BlankJson.decodeFromString<ElementSheet>(sheetJson) }
+            .getOrDefault(ElementSheet())
 
         val judgements = runCatching {
             BlankJson.decodeFromString<List<Judgement>>(comparison?.judgementsJson ?: "[]")
@@ -84,13 +84,13 @@ class DiffViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrDefault(emptyList())
 
         val next = round?.let {
-            db.rounds().futureOf(it.itemId, System.currentTimeMillis()).minByOrNull { r -> r.dueAt }
+            db.rounds().futureOf(it.noteId, System.currentTimeMillis()).minByOrNull { r -> r.dueAt }
         }
 
         _state.update {
             DiffState(
                 loading = false,
-                title = item?.title.orEmpty(),
+                title = note?.title.orEmpty(),
                 roundIndex = round?.roundIndex ?: 0,
                 submission = submission,
                 comparison = comparison,

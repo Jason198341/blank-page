@@ -26,11 +26,11 @@ object ReviewSchedule {
     fun label(roundIndex: Int): String = if (roundIndex == 0) "D0" else "D+${OFFSETS[roundIndex]}"
 
     /** 등록 시 5회차를 한 번에 만든다. D0 은 지금 당장(알림 시각을 기다리지 않는다). */
-    fun plan(itemId: Long, now: Long, notifyHour: Int): List<RoundEntity> {
+    fun plan(noteId: String, now: Long, notifyHour: Int): List<RoundEntity> {
         val base = Dates.toDate(now)
         return OFFSETS.mapIndexed { index, offset ->
             RoundEntity(
-                itemId = itemId,
+                noteId = noteId,
                 roundIndex = index,
                 offsetDays = offset,
                 dueAt = if (index == 0) now else Dates.atHour(base.plusDays(offset.toLong()), notifyHour)

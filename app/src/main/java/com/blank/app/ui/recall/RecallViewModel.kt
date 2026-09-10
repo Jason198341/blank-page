@@ -37,12 +37,12 @@ class RecallViewModel(app: Application) : AndroidViewModel(app) {
         loadedRoundId = roundId
         viewModelScope.launch {
             val round = container.db.rounds().byId(roundId)
-            val item = round?.let { container.db.items().byId(it.itemId) }
+            val note = round?.let { container.db.notes().byId(it.noteId) }
             val settings = container.settings.get()
             _state.value = RecallState(
                 loading = false,
                 round = round,
-                title = item?.title.orEmpty(),
+                title = note?.title.orEmpty(),
                 hintAvailable = settings.allowHint,
                 startedAt = System.currentTimeMillis()
             )
@@ -60,9 +60,10 @@ class RecallViewModel(app: Application) : AndroidViewModel(app) {
     fun useHint() {
         val round = _state.value.round ?: return
         viewModelScope.launch {
-            val item = container.db.items().byId(round.itemId) ?: return@launch
-            val revisionId = if (round.revisionId != 0L) round.revisionId else item.currentRevisionId
-            val sheet = container.db.revisions().byId(revisionId)?.sheetJson.orEmpty()
+            val note = container.db.notes().byId(round.noteId) ?: return@launch
+            val sheet = if (round.revisionId != 0L)
+                container.db.revisions().byId(round.revisionId)?.sheetJson.orEmpty()
+            else note.sheetJson
             val labels = runCatching {
                 com.blank.app.domain.BlankJson
                     .decodeFromString<com.blank.app.domain.ElementSheet>(sheet)

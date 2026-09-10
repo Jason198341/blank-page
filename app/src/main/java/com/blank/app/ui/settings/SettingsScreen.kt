@@ -40,6 +40,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.blank.app.cli.TermuxBridge
 import com.blank.app.core.AppContainer
 import com.blank.app.data.prefs.Settings
+import com.blank.app.data.vault.VaultStore
+import com.blank.app.data.vault.VaultSync
 import com.blank.app.notify.ScheduleSyncer
 import com.blank.app.ui.common.BlankCard
 import com.blank.app.ui.theme.Accent
@@ -68,6 +70,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setExpire(v: Boolean) = viewModelScope.launch { container.settings.setExpireMissed(v) }
     fun setHint(v: Boolean) = viewModelScope.launch { container.settings.setAllowHint(v) }
     fun setLimit(v: Int) = viewModelScope.launch { container.settings.setActiveLimit(v) }
+    fun setEnrollNew(v: Boolean) = viewModelScope.launch { container.settings.setEnrollNew(v) }
+    fun resync() = viewModelScope.launch { runCatching { VaultSync.sync(getApplication()) } }
 }
 
 @Composable
@@ -184,6 +188,39 @@ fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = viewModel()) {
                             steps = 54
                         )
                     }
+                }
+            }
+
+            item {
+                BlankCard {
+                    Column {
+                        SectionTitle("볼트")
+                        Text(
+                            VaultStore.displayPath(context)?.let { "폴더: $it" } ?: "볼트가 설정되지 않았습니다",
+                            style = MaterialTheme.typography.bodyMedium, color = TextSecondary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "노트는 이 폴더의 .md 파일입니다. 옵시디언에서 열어 편집해도 " +
+                                "다시 들어오면 반영됩니다.",
+                            style = MaterialTheme.typography.labelMedium, color = TextTertiary
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        TextButton(onClick = { vm.resync() }, contentPadding = PaddingValues(0.dp)) {
+                            Text("지금 다시 동기화", color = Accent)
+                        }
+                    }
+                }
+            }
+
+            item {
+                BlankCard {
+                    ToggleRow(
+                        "새 볼트 노트를 복습 대상으로",
+                        "끄면 옵시디언 등에서 발견한 노트는 참조용으로 들어옵니다(기본). " +
+                            "켜면 새 노트가 자동으로 복습에 올라갑니다. 앱에서 만든 노트는 이 설정과 무관합니다.",
+                        settings.enrollNewVaultNotes, vm::setEnrollNew
+                    )
                 }
             }
 

@@ -3,6 +3,7 @@ package com.blank.app.data.local
 import androidx.room.Dao
 import androidx.room.Embedded
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
@@ -14,7 +15,6 @@ data class DueRound(
     val title: String,
     val tags: String,
     val kind: ItemKind,
-    /** LEFT JOIN 이라 아직 채점이 없으면 null. enum 컨버터를 태우지 않고 날것으로 받는다. */
     val grade: String?,
     val hit: Int?,
     val total: Int?
@@ -23,32 +23,41 @@ data class DueRound(
 }
 
 private const val DUE_SELECT = """
-    SELECT r.*, i.title AS title, i.tags AS tags, i.kind AS kind,
+    SELECT r.*, n.title AS title, n.tags AS tags, n.kind AS kind,
            c.grade AS grade, c.hit AS hit, c.total AS total
     FROM rounds r
-    JOIN items i ON i.id = r.itemId
+    JOIN notes n ON n.id = r.noteId
     LEFT JOIN submissions s ON s.roundId = r.id
     LEFT JOIN comparisons c ON c.submissionId = s.id
 """
 
 @Dao
-interface ItemDao {
-    @Insert suspend fun insert(item: ItemEntity): Long
-    @Update suspend fun update(item: ItemEntity)
-    @Query("SELECT * FROM items WHERE id = :id") suspend fun byId(id: Long): ItemEntity?
-    @Query("SELECT * FROM items WHERE id = :id") fun flowById(id: Long): Flow<ItemEntity?>
-    @Query("SELECT * FROM items ORDER BY archived ASC, createdAt DESC") fun all(): Flow<List<ItemEntity>>
-    @Query("SELECT COUNT(*) FROM items WHERE archived = 0") suspend fun activeCount(): Int
-    @Query("UPDATE items SET archived = :archived, updatedAt = :now WHERE id = :id")
-    suspend fun setArchived(id: Long, archived: Boolean, now: Long)
-    @Query("DELETE FROM items WHERE id = :id") suspend fun delete(id: Long)
+interface NoteDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(note: NoteEntity)
+    @Update suspend fun update(note: NoteEntity)
+    @Query("SELECT * FROM notes WHERE id = :id") suspend fun byId(id: String): NoteEntity?
+    @Query("SELECT * FROM notes WHERE id = :id") fun flowById(id: String): Flow<NoteEntity?>
+    @Query("SELECT * FROM notes WHERE relPath = :relPath") suspend fun byPath(relPath: String): NoteEntity?
+    @Query("SELECT * FROM notes WHERE missing = 0 ORDER BY updatedAt DESC") fun all(): Flow<List<NoteEntity>>
+    @Query("SELECT * FROM notes WHERE missing = 0") suspend fun allNow(): List<NoteEntity>
+    @Query("SELECT COUNT(*) FROM notes WHERE referenceOnly = 0 AND archived = 0 AND missing = 0")
+    suspend fun activeReviewCount(): Int
+    /** 위키링크 해석용 제목→id */
+    @Query("SELECT id, title FROM notes WHERE missing = 0")
+    suspend fun titleIndex(): List<TitleRow>
+    @Query("UPDATE notes SET archived = :archived, updatedAt = :now WHERE id = :id")
+    suspend fun setArchived(id: String, archived: Boolean, now: Long)
+    @Query("DELETE FROM notes WHERE id = :id") suspend fun delete(id: String)
+    @Query("UPDATE notes SET missing = :missing WHERE id = :id") suspend fun setMissing(id: String, missing: Boolean)
 }
+
+data class TitleRow(val id: String, val title: String)
 
 @Dao
 interface RevisionDao {
     @Insert suspend fun insert(revision: RevisionEntity): Long
-    @Query("SELECT * FROM item_revisions WHERE id = :id") suspend fun byId(id: Long): RevisionEntity?
-    @Query("SELECT MAX(revision) FROM item_revisions WHERE itemId = :itemId") suspend fun maxRevision(itemId: Long): Int?
+    @Query("SELECT * FROM note_revisions WHERE id = :id") suspend fun byId(id: Long): RevisionEntity?
+    @Query("SELECT MAX(revision) FROM note_revisions WHERE noteId = :noteId") suspend fun maxRevision(noteId: String): Int?
 }
 
 @Dao
@@ -58,41 +67,35 @@ interface RoundDao {
     @Update suspend fun update(round: RoundEntity)
 
     @Query("SELECT * FROM rounds WHERE id = :id") suspend fun byId(id: Long): RoundEntity?
+    @Query("SELECT COUNT(*) FROM rounds WHERE noteId = :noteId") suspend fun countForNote(noteId: String): Int
 
-    /** 다음에 알람을 걸 단 하나의 회차. 알람은 이것 하나만 건다. */
     @Query("SELECT * FROM rounds WHERE state = 'PENDING' ORDER BY dueAt ASC LIMIT 1")
     suspend fun nextPending(): RoundEntity?
 
-    /** 시각이 지났는데 아직 알림이 안 나간 것들 (안전망 워커용) */
     @Query("SELECT * FROM rounds WHERE state = 'PENDING' AND dueAt <= :now ORDER BY dueAt ASC")
     suspend fun overdue(now: Long): List<RoundEntity>
 
-    @Query("SELECT * FROM rounds WHERE itemId = :itemId ORDER BY roundIndex ASC, attempt ASC")
-    fun flowByItem(itemId: Long): Flow<List<RoundEntity>>
+    @Query("SELECT * FROM rounds WHERE noteId = :noteId ORDER BY roundIndex ASC, attempt ASC")
+    fun flowByNote(noteId: String): Flow<List<RoundEntity>>
 
-    @Query("SELECT * FROM rounds WHERE itemId = :itemId AND state != 'DONE' AND dueAt > :after ORDER BY dueAt ASC")
-    suspend fun futureOf(itemId: Long, after: Long): List<RoundEntity>
+    @Query("SELECT * FROM rounds WHERE noteId = :noteId AND state != 'DONE' AND dueAt > :after ORDER BY dueAt ASC")
+    suspend fun futureOf(noteId: String, after: Long): List<RoundEntity>
 
-    /** 오늘 화면: 시각이 지난 미완료 전부 (이월분 포함) */
+    /** 참조용으로 바뀌거나 파일이 사라진 노트의 예정 회차를 접는다 */
+    @Query("UPDATE rounds SET state = 'SKIPPED' WHERE noteId = :noteId AND state = 'PENDING'")
+    suspend fun skipPendingOf(noteId: String)
+
     @Transaction
     @Query("$DUE_SELECT WHERE r.dueAt <= :until AND r.state != 'DONE' AND r.state != 'SKIPPED' ORDER BY r.dueAt ASC, r.roundIndex ASC")
     fun flowDueUntil(until: Long): Flow<List<DueRound>>
 
-    /** 오늘 화면 하단: 오늘 이미 끝낸 것들 */
     @Transaction
     @Query("$DUE_SELECT WHERE r.completedAt BETWEEN :from AND :to ORDER BY r.completedAt DESC")
     fun flowCompletedBetween(from: Long, to: Long): Flow<List<DueRound>>
 
-    /** 캘린더 한 달치 */
     @Transaction
-    @Query("$DUE_SELECT WHERE r.dueAt BETWEEN :from AND :to ORDER BY r.dueAt ASC, r.roundIndex ASC")
+    @Query("$DUE_SELECT WHERE r.dueAt BETWEEN :from AND :to AND r.state != 'SKIPPED' ORDER BY r.dueAt ASC, r.roundIndex ASC")
     fun flowBetween(from: Long, to: Long): Flow<List<DueRound>>
-
-    @Query("SELECT COUNT(*) FROM rounds WHERE dueAt BETWEEN :from AND :to AND state != 'DONE'")
-    suspend fun countDueBetween(from: Long, to: Long): Int
-
-    @Query("DELETE FROM rounds WHERE itemId = :itemId AND state = 'PENDING'")
-    suspend fun deletePendingOf(itemId: Long)
 }
 
 @Dao
@@ -108,7 +111,5 @@ interface ComparisonDao {
     @Update suspend fun update(comparison: ComparisonEntity)
     @Query("SELECT * FROM comparisons WHERE submissionId = :submissionId") suspend fun bySubmission(submissionId: Long): ComparisonEntity?
     @Query("SELECT * FROM comparisons WHERE submissionId = :submissionId") fun flowBySubmission(submissionId: Long): Flow<ComparisonEntity?>
-    @Query("SELECT * FROM comparisons WHERE roundId = :roundId") fun flowByRound(roundId: Long): Flow<ComparisonEntity?>
-    /** 채점이 아직 안 끝난 것들 — 앱을 다시 열었을 때 이어받는다 */
     @Query("SELECT * FROM comparisons WHERE status = 'PENDING'") suspend fun pending(): List<ComparisonEntity>
 }

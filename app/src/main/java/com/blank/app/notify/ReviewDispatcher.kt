@@ -12,17 +12,21 @@ object ReviewDispatcher {
         val now = System.currentTimeMillis()
         val due = db.rounds().overdue(now)
         for (round in due) {
-            val item = db.items().byId(round.itemId) ?: continue
-            if (item.archived) continue
-            db.rounds().update(
-                round.copy(
-                    state = RoundState.NOTIFIED,
-                    // 알림이 나가는 순간 채점 기준이 되는 원본을 고정한다
-                    revisionId = if (round.revisionId == 0L) item.currentRevisionId else round.revisionId,
-                    notifiedAt = now
+            val note = db.notes().byId(round.noteId) ?: continue
+            if (note.archived || note.referenceOnly) continue
+            // 알림이 나가는 순간 이 회차의 채점 기준(원본 스냅샷)을 얼린다.
+            // 이후 옵시디언에서든 앱에서든 원본이 바뀌어도 이 회차는 지금 이 원본으로 채점한다.
+            val revisionId = if (round.revisionId != 0L) round.revisionId else {
+                val rev = (db.revisions().maxRevision(note.id) ?: 0) + 1
+                db.revisions().insert(
+                    com.blank.app.data.local.RevisionEntity(
+                        noteId = note.id, revision = rev, title = note.title, body = note.body,
+                        kind = note.kind, sheetJson = note.sheetJson, createdAt = now
+                    )
                 )
-            )
-            Notifications.show(context, round.id, item.title, round.roundIndex)
+            }
+            db.rounds().update(round.copy(state = RoundState.NOTIFIED, revisionId = revisionId, notifiedAt = now))
+            Notifications.show(context, round.id, note.title, round.roundIndex)
         }
     }
 }

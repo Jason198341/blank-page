@@ -22,8 +22,12 @@ data class Settings(
     val expireMissed: Boolean = false,
     /** 재현 화면에서 힌트 1회를 허용할 것인가 */
     val allowHint: Boolean = true,
-    /** 동시에 살아 있을 수 있는 항목 수. 넘으면 신규 등록을 막는다. */
-    val activeLimit: Int = 30
+    /** 동시에 살아 있을 수 있는 복습 노트 수. 넘으면 신규 복습 등록을 막는다. */
+    val activeLimit: Int = 30,
+    /** 볼트에서 새로 발견한 노트를 복습 대상으로 자동 등록할지. 기본은 끔 —
+     *  옵시디언 볼트는 대개 참조 자료라, 전부 복습에 밀어넣으면 큐가 사용자를 죽인다.
+     *  앱에서 만든 노트는 이 값과 무관하게 복습이 기본이다. */
+    val enrollNewVaultNotes: Boolean = false
 )
 
 class SettingsStore(private val context: Context) {
@@ -40,6 +44,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setExpireMissed(v: Boolean) = context.dataStore.edit { it[EXPIRE_MISSED] = v }
     suspend fun setAllowHint(v: Boolean) = context.dataStore.edit { it[ALLOW_HINT] = v }
     suspend fun setActiveLimit(v: Int) = context.dataStore.edit { it[ACTIVE_LIMIT] = v }
+    suspend fun setEnrollNew(v: Boolean) = context.dataStore.edit { it[ENROLL_NEW] = v }
 
     private fun Preferences.toSettings() = Settings(
         notifyHour = this[NOTIFY_HOUR] ?: 8,
@@ -47,7 +52,8 @@ class SettingsStore(private val context: Context) {
         dailyCap = this[DAILY_CAP] ?: 7,
         expireMissed = this[EXPIRE_MISSED] ?: false,
         allowHint = this[ALLOW_HINT] ?: true,
-        activeLimit = this[ACTIVE_LIMIT] ?: 30
+        activeLimit = this[ACTIVE_LIMIT] ?: 30,
+        enrollNewVaultNotes = this[ENROLL_NEW] ?: false
     )
 
     private companion object {
@@ -57,5 +63,6 @@ class SettingsStore(private val context: Context) {
         val EXPIRE_MISSED = booleanPreferencesKey("expire_missed")
         val ALLOW_HINT = booleanPreferencesKey("allow_hint")
         val ACTIVE_LIMIT = intPreferencesKey("active_limit")
+        val ENROLL_NEW = booleanPreferencesKey("enroll_new_vault_notes")
     }
 }

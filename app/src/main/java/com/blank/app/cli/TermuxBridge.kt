@@ -98,12 +98,12 @@ object TermuxBridge {
     /** 등록한 지식을 채점 가능한 요소표로 정규화해 달라고 맡긴다. */
     fun requestNormalize(
         context: Context,
-        itemId: Long,
+        noteId: String,
         title: String,
         body: String,
         kind: String
     ): Result<Dispatch> =
-        send(context, op = "normalize", req = "n${itemId}_${System.currentTimeMillis()}",
+        send(context, op = "normalize", req = "n${noteId}_${System.currentTimeMillis()}",
             top = title.replace('\n', ' '), bottom = body, imagePath = null, kind = kind)
 
     /** 재현물을 요소표와 대조해 채점해 달라고 맡긴다. */

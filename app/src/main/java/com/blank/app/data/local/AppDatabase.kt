@@ -22,15 +22,15 @@ class Converters {
 
 @Database(
     entities = [
-        ItemEntity::class, RevisionEntity::class, RoundEntity::class,
+        NoteEntity::class, RevisionEntity::class, RoundEntity::class,
         SubmissionEntity::class, ComparisonEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun items(): ItemDao
+    abstract fun notes(): NoteDao
     abstract fun revisions(): RevisionDao
     abstract fun rounds(): RoundDao
     abstract fun submissions(): SubmissionDao

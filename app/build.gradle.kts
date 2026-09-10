@@ -85,6 +85,9 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
+    // SAF 볼트 폴더 읽기·쓰기 (옵시디언 양방향)
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

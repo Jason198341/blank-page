@@ -1,9 +1,10 @@
 package com.blank.app.ui.nav
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -18,17 +19,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.navigation.NavType
 import com.blank.app.ui.calendar.ScheduleScreen
 import com.blank.app.ui.home.TodayScreen
-import com.blank.app.ui.item.CreateScreen
-import com.blank.app.ui.item.KnowledgeScreen
-import com.blank.app.ui.item.LibraryScreen
+import com.blank.app.ui.note.NoteEditScreen
+import com.blank.app.ui.note.NoteScreen
+import com.blank.app.ui.onboarding.OnboardingScreen
 import com.blank.app.ui.recall.RecallScreen
 import com.blank.app.ui.result.DiffScreen
 import com.blank.app.ui.settings.SettingsScreen
@@ -36,34 +37,36 @@ import com.blank.app.ui.theme.Accent
 import com.blank.app.ui.theme.Bg
 import com.blank.app.ui.theme.BgRecall
 import com.blank.app.ui.theme.TextTertiary
+import com.blank.app.ui.vault.VaultBrowserScreen
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val TABS = listOf(
     Tab("today", "오늘", Icons.Outlined.Inbox),
-    Tab("schedule", "달력", Icons.Outlined.CalendarMonth),
-    Tab("library", "서재", Icons.Outlined.Description)
+    Tab("calendar", "달력", Icons.Outlined.CalendarMonth),
+    Tab("vault", "볼트", Icons.Outlined.FolderOpen)
 )
 
 @Composable
-fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
+fun BlankNav(
+    hasVault: Boolean,
+    onPickVault: () -> Unit,
+    openRoundId: Long?,
+    onOpenRoundConsumed: () -> Unit
+) {
+    if (!hasVault) { OnboardingScreen(onPickVault = onPickVault); return }
+
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
 
-    // 알림 탭 → 재현 화면 직행
     LaunchedEffect(openRoundId) {
-        openRoundId?.let {
-            nav.navigate("recall/$it")
-            onOpenRoundConsumed()
-        }
+        openRoundId?.let { nav.navigate("recall/$it"); onOpenRoundConsumed() }
     }
 
-    // 재현 화면은 탭바를 숨긴다. 여기 들어오면 다른 데로 새지 않는다.
     val showTabs = route in TABS.map { it.route }
 
     Scaffold(
-        // 재현 화면은 더 검다. 상태바 뒤까지 그 색이 이어져야 화면이 갈라져 보이지 않는다.
         containerColor = if (route?.startsWith("recall/") == true) BgRecall else Bg,
         bottomBar = {
             if (showTabs) NavigationBar(containerColor = Bg) {
@@ -74,17 +77,14 @@ fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
                         onClick = {
                             nav.navigate(tab.route) {
                                 popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                                launchSingleTop = true; restoreState = true
                             }
                         },
                         icon = { Icon(tab.icon, contentDescription = tab.label) },
                         label = { Text(tab.label) },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Accent,
-                            selectedTextColor = Accent,
-                            unselectedIconColor = TextTertiary,
-                            unselectedTextColor = TextTertiary,
+                            selectedIconColor = Accent, selectedTextColor = Accent,
+                            unselectedIconColor = TextTertiary, unselectedTextColor = TextTertiary,
                             indicatorColor = Bg
                         )
                     )
@@ -95,33 +95,55 @@ fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
         NavHost(
             navController = nav,
             startDestination = "today",
-            // 탭이 없는 화면에도 여백을 그대로 넘긴다. 안 넘기면 상태바가 제목을 먹고
-            // 제스처바가 제출 버튼을 깔고 앉는다 (탭바가 없을 땐 아래 여백이
-            // 시스템 제스처바 높이만큼만 잡힌다).
             modifier = Modifier.padding(padding)
         ) {
             composable("today") {
                 TodayScreen(
                     onOpenRound = { nav.navigate("recall/$it") },
                     onOpenResult = { nav.navigate("diff/$it") },
-                    onCreate = { nav.navigate("create") }
+                    onCreate = { nav.navigate("edit") }
                 )
             }
-            composable("schedule") {
+            composable("calendar") {
                 ScheduleScreen(
                     onOpenRound = { nav.navigate("recall/$it") },
                     onOpenResult = { nav.navigate("diff/$it") }
                 )
             }
-            composable("library") {
-                LibraryScreen(
-                    onOpenItem = { nav.navigate("item/$it") },
-                    onCreate = { nav.navigate("create") },
+            composable("vault") {
+                VaultBrowserScreen(
+                    onOpenNote = { nav.navigate("note/$it") },
+                    onCreate = { nav.navigate("edit") },
                     onSettings = { nav.navigate("settings") }
                 )
             }
-            composable("create") {
-                CreateScreen(onDone = { nav.popBackStack() })
+            composable("edit") {
+                NoteEditScreen(
+                    noteId = null,
+                    onDone = { id -> nav.navigate("note/$id") { popUpTo("edit") { inclusive = true } } },
+                    onCancel = { nav.popBackStack() }
+                )
+            }
+            composable(
+                "edit/{noteId}",
+                arguments = listOf(navArgument("noteId") { type = NavType.StringType })
+            ) { backStack ->
+                NoteEditScreen(
+                    noteId = backStack.arguments?.getString("noteId"),
+                    onDone = { nav.popBackStack() },
+                    onCancel = { nav.popBackStack() }
+                )
+            }
+            composable(
+                "note/{noteId}",
+                arguments = listOf(navArgument("noteId") { type = NavType.StringType })
+            ) { backStack ->
+                NoteScreen(
+                    noteId = backStack.arguments?.getString("noteId").orEmpty(),
+                    onOpenNote = { nav.navigate("note/$it") },
+                    onEdit = { nav.navigate("edit/$it") },
+                    onBack = { nav.popBackStack() }
+                )
             }
             composable(
                 "recall/{roundId}",
@@ -130,11 +152,7 @@ fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
                 val roundId = backStack.arguments?.getLong("roundId") ?: 0L
                 RecallScreen(
                     roundId = roundId,
-                    onSubmitted = { submissionId ->
-                        nav.navigate("diff/$submissionId") {
-                            popUpTo("recall/$roundId") { inclusive = true }
-                        }
-                    },
+                    onSubmitted = { sid -> nav.navigate("diff/$sid") { popUpTo("recall/$roundId") { inclusive = true } } },
                     onBack = { nav.popBackStack() }
                 )
             }
@@ -147,19 +165,7 @@ fun BlankNav(openRoundId: Long?, onOpenRoundConsumed: () -> Unit) {
                     onDone = { nav.popBackStack() }
                 )
             }
-            composable(
-                "item/{itemId}",
-                arguments = listOf(navArgument("itemId") { type = NavType.LongType })
-            ) { backStack ->
-                KnowledgeScreen(
-                    itemId = backStack.arguments?.getLong("itemId") ?: 0L,
-                    onOpenResult = { nav.navigate("diff/$it") },
-                    onBack = { nav.popBackStack() }
-                )
-            }
-            composable("settings") {
-                SettingsScreen(onBack = { nav.popBackStack() })
-            }
+            composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }) }
         }
     }
 }
