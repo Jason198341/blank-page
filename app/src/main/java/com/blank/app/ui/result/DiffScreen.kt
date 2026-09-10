@@ -53,6 +53,7 @@ import com.blank.app.ui.common.GradeChip
 import com.blank.app.ui.common.RecallBar
 import com.blank.app.ui.common.RoundBadge
 import com.blank.app.ui.theme.Accent
+import com.blank.app.ui.theme.PillShape
 import com.blank.app.ui.theme.Bg
 import com.blank.app.ui.theme.CardBg
 import com.blank.app.ui.theme.DiffExtra
@@ -193,7 +194,7 @@ fun DiffScreen(
             Button(
                 onClick = onDone,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(14.dp),
+                shape = PillShape,
                 colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White)
             ) { Text("확인") }
         }

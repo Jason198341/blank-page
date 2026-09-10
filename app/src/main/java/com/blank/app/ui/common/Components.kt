@@ -62,9 +62,9 @@ fun BlankCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(CardBg)
-            .border(1.dp, Outline, RoundedCornerShape(16.dp))
+            .border(1.dp, Outline, RoundedCornerShape(20.dp))
             .padding(padding)
     ) { content() }
 }

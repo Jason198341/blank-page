@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.blank.app.ui.theme.Accent
+import com.blank.app.ui.theme.PillShape
 import com.blank.app.ui.theme.Bg
 import com.blank.app.ui.theme.TextPrimary
 import com.blank.app.ui.theme.TextSecondary
@@ -43,7 +44,7 @@ fun OnboardingScreen(onPickVault: () -> Unit) {
         Button(
             onClick = onPickVault,
             modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(14.dp),
+            shape = PillShape,
             colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White)
         ) { Text("볼트 폴더 고르기") }
         Spacer(Modifier.height(16.dp))

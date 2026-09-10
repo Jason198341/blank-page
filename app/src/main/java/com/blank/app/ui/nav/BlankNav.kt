@@ -35,6 +35,7 @@ import com.blank.app.ui.result.DiffScreen
 import com.blank.app.ui.settings.SettingsScreen
 import com.blank.app.ui.theme.Accent
 import com.blank.app.ui.theme.Bg
+import com.blank.app.ui.theme.BgReading
 import com.blank.app.ui.theme.BgRecall
 import com.blank.app.ui.theme.TextTertiary
 import com.blank.app.ui.vault.VaultBrowserScreen
@@ -67,7 +68,11 @@ fun BlankNav(
     val showTabs = route in TABS.map { it.route }
 
     Scaffold(
-        containerColor = if (route?.startsWith("recall/") == true) BgRecall else Bg,
+        containerColor = when {
+            route?.startsWith("recall/") == true -> BgRecall
+            route?.startsWith("note/") == true -> BgReading
+            else -> Bg
+        },
         bottomBar = {
             if (showTabs) NavigationBar(containerColor = Bg) {
                 TABS.forEach { tab ->

@@ -44,7 +44,7 @@ fun MarkdownView(
                 is MdBlock.Heading -> {
                     Spacer(Modifier.height(if (block.level <= 2) 14.dp else 8.dp))
                     InlineText(block.text, onWikiLink, onUrl,
-                        size = when (block.level) { 1 -> 24; 2 -> 20; 3 -> 17; else -> 15 }.sp,
+                        size = when (block.level) { 1 -> 26; 2 -> 21; 3 -> 18; else -> 16 }.sp,
                         weight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
                 }
@@ -88,7 +88,7 @@ private fun InlineText(
     onWikiLink: (String) -> Unit,
     onUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
-    size: androidx.compose.ui.unit.TextUnit = 15.sp,
+    size: androidx.compose.ui.unit.TextUnit = 16.sp,
     weight: FontWeight = FontWeight.Normal,
     color: androidx.compose.ui.graphics.Color = TextPrimary
 ) {

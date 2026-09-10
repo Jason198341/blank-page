@@ -39,7 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.blank.app.ui.common.BlankCard
 import com.blank.app.ui.common.RoundBadge
 import com.blank.app.ui.theme.Accent
-import com.blank.app.ui.theme.Bg
+import com.blank.app.ui.theme.BgReading
 import com.blank.app.ui.theme.TextPrimary
 import com.blank.app.ui.theme.TextSecondary
 import com.blank.app.ui.theme.TextTertiary
@@ -60,7 +60,7 @@ fun NoteScreen(
     LaunchedEffect(noteId) { vm.load(noteId) }
     val note = state.note
 
-    Column(Modifier.fillMaxSize().background(Bg)) {
+    Column(Modifier.fillMaxSize().background(BgReading)) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
@@ -74,7 +74,7 @@ fun NoteScreen(
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)) {
+            .padding(horizontal = 20.dp)) {
 
             note ?: return@Column
 

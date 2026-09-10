@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.blank.app.ui.common.RoundBadge
 import com.blank.app.ui.theme.Accent
+import com.blank.app.ui.theme.PillShape
 import com.blank.app.ui.theme.BgRecall
 import com.blank.app.ui.theme.CardBg
 import com.blank.app.ui.theme.Outline
@@ -194,7 +195,7 @@ fun RecallScreen(
                 onClick = { vm.submit(gaveUp = !hasContent) { onSubmitted(it) } },
                 enabled = !state.submitting,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(14.dp),
+                shape = PillShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (hasContent) Accent else CardBg,
                     contentColor = if (hasContent) Color.White else TextSecondary
