@@ -242,6 +242,15 @@ fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = viewModel()) {
                     }
                 }
             }
+
+            item {
+                Text(
+                    "백지 v${com.blank.app.BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.labelMedium, color = TextTertiary,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
         }
     }
 }

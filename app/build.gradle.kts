@@ -14,8 +14,8 @@ android {
         applicationId = "com.blank.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "2.1.1"
 
         // 이 폰(arm64)만 담아 APK 크기를 줄인다
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -51,6 +51,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
