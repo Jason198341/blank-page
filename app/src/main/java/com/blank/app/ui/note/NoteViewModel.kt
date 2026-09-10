@@ -8,7 +8,6 @@ import com.blank.app.data.local.ItemKind
 import com.blank.app.data.local.NoteEntity
 import com.blank.app.data.local.RoundEntity
 import com.blank.app.domain.BlankJson
-import com.blank.app.domain.Frontmatter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
